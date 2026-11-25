@@ -145,15 +145,38 @@ PASSED = 'passed'  # a change request whose review passed and whose landing is p
 
 
 class BoardError(Exception):
-    """A refusal or failure; `next` holds the steps that clear it, in the views' step shape ({action, command|text|paths})."""
+    """A refusal or failure; `next` holds the steps that clear it, in the views' step shape ({action, command|text|paths}). Built only by
+    refuse, bad_input and fault (the rules group of bin/test-agent-configs.py checks the source, nixes-h1igl)."""
 
-    def __init__(self, message: str = '', next: list[dict] | None = None):
+    def __init__(self, message: str = '', next: list[dict] | None = None, cell: str | None = None):
         super().__init__(message)
         self.next = list(next or [])
+        self.cell = cell
+
+
+def refuse(cell: str, text: str, next: list[dict] | None = None) -> BoardError:
+    """A rule refusal: `cell` is its model.md Write-rules cell, and only that cell's Owner (the column's functions) builds it."""
+    return BoardError(text, next, cell)
+
+
+def bad_input(text: str, next: list[dict] | None = None) -> BoardError:
+    """A request malformed whatever the board holds: an unknown id, a record of the wrong type for the verb, bad flags or files."""
+    return BoardError(text, next)
+
+
+def fault(text: str, next: list[dict] | None = None) -> BoardError:
+    """A failure of the environment (git, bd, the server, files, setup, a compare-and-set lost) or of the board's own invariants."""
+    return BoardError(text, next)
+
+
+def combined(errors: list[BoardError], text: str) -> BoardError:
+    """Several refusals of one call reported together: the first, which keeps its cell, carries `text`."""
+    errors[0].args = (text,)
+    return errors[0]
 
 
 class PairMoved(BoardError):
-    """A refusal because the pair to land moved: `part` is 'branch' or 'base'."""
+    """An environment failure: the pair to land moved in git: `part` is 'branch' or 'base'."""
 
     def __init__(self, message: str, next: list[dict], part: str):
         super().__init__(message, next)
@@ -204,12 +227,12 @@ def acting(actor: str | None = None) -> str | None:
     with no session environment. A missing actor never stands for the user: `''` is refused as internal, and so is a session whose actor
     cannot be derived."""
     if actor == '':
-        raise BoardError("internal: an actor is a session's actor, or None to derive it; '' never stands for the user")
+        raise refuse('actor.none', "internal: an actor is a session's actor, or None to derive it; '' never stands for the user")
     if actor is not None:
         return actor
     derived = derived_actor()
     if derived is None and any(os.environ.get(name, '').strip() for name in SESSION_ENVIRONMENT):
-        raise BoardError("this session's actor cannot be derived (bin/session actor failed): a write is refused, never made as the user")
+        raise refuse('actor.none', "this session's actor cannot be derived (bin/session actor failed): a write is refused, never made as the user")
     return derived
 
 
@@ -248,10 +271,10 @@ def ensure_server(start: Path | None = None) -> None:
     except (OSError, ValueError):
         pass
     if os.environ.get('CODEX_SANDBOX'):
-        raise BoardError('the board server is unreachable from this sandbox: rerun with elevated sandbox permissions')
+        raise fault('the board server is unreachable from this sandbox: rerun with elevated sandbox permissions')
     holder = server_holding(beads)
     if holder is not None:  # a slow server is not a dead one: a second start fails on the lock after bd rewrote the port file
-        raise BoardError(f'the board server (pid {holder[0]}, port {holder[1]}) holds the database but did not answer on port {port}: '
+        raise fault(f'the board server (pid {holder[0]}, port {holder[1]}) holds the database but did not answer on port {port}: '
                          'retry; if it persists, tell the user')
     subprocess.run(['bd', 'dolt', 'start'], cwd=root, capture_output=True, env=bd_env())
 
@@ -298,7 +321,7 @@ def bd_message(result: subprocess.CompletedProcess) -> str:
 def bd_checked(*args: str, stdin: str | None = None) -> str:
     result = bd(*args, stdin=stdin)
     if result.returncode != 0:
-        raise BoardError(f"`bd {' '.join(args)}` failed: {bd_message(result)}")
+        raise fault(f"`bd {' '.join(args)}` failed: {bd_message(result)}")
     return result.stdout
 
 
@@ -364,7 +387,7 @@ MOVES = (
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', ('anyone',), (), ('landed',)),  # the target already holds the tip: the command checked before the fast-forward
     Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('attended', 'user'), ('reason', 'items-closed', 'no-waiters'), ('dropped',)),
     Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', ('anyone',)),
-    Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', DEFER),
+    Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', DEFER, ('no-hung-waiters',)),
     Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
     Move('claim', WORK_GROUP, ('open',), '=', '-', 'you', ('agent',)),
     Move('take', WORK_GROUP, ('open',), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
@@ -373,17 +396,17 @@ MOVES = (
     Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', FREE_HOLD, ('no-dropped-target',)),  # reopen takes close's authority; unheld, 'holder' admits anyone
     Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ITEM_WRITE, ('reason', 'no-waiters'), ('done', 'dropped')),
     Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ITEM_WRITE, ('open-parent', 'no-dropped-target')),
-    Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', DEFER),
+    Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', DEFER, ('no-hung-waiters',)),
     Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
-    Move('defer', 'decision', ('open',), 'deferred', '*', '-', DEFER),
+    Move('defer', 'decision', ('open',), 'deferred', '*', '-', DEFER, ('no-hung-waiters',)),
     Move('undefer', 'decision', ('deferred',), 'open', '-', '-', ('deferrer',)),
     Move('claim', 'decision', ('open', 'decided'), '=', '-', 'you', ('agent',)),  # which sessions a bare claim gives a question is the pull (ROLE_KINDS)
     Move('claim', 'decision', ('in_force',), '=', '-', 'you', ('planner',)),
     Move('take', 'decision', ('open', 'decided', 'in_force'), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
     Move('unclaim', 'decision', ('open', 'decided', 'in_force'), '=', '*', '-', FREE_HOLD),
     Move('ruling record', 'decision', ('open', 'decided'), 'decided', 'you', '=', ('holder',)),
-    Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', ('holder',), ('ruling-waits',)),
-    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', ('attended', 'user'), ('ruling-waits',)),
+    Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', ('holder',), ('settled-premises',)),
+    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', ('attended', 'user'), ('settled-premises',)),
     Move('supersede', 'decision', ('open', 'decided', 'in_force', 'closed'), 'closed', '*', '-', ('deciding', 'user'), (), ('superseded',)),
     Move('close', 'decision', ('open', 'decided'), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('dropped', 'superseded')),  # superseded: another ruling answered it
     Move('close', 'decision', ('in_force',), 'closed', '*', '-', ('planner+holding', *DECIDING_CLOSE), ('reason',), ('planned',)),  # planning closes the ruling it claimed
@@ -440,13 +463,14 @@ def group_of(board: 'Board | None', issue: dict) -> str | None:
     return ITEM_GROUP if group == WORK_GROUP and board is not None and board.cr_of(issue['id']) else group
 
 
-def refuse_held(issue: dict, row: Move, command: str, actor: str | None) -> None:
+def refuse_held(issue: dict, row: Move, command: str, actor: str | None) -> BoardError | None:
     """The row's held rule: '-' needs the record unheld, 'you' needs the caller's session holding it."""
     current = issue.get('assignee') or ''
     if row.held == '-' and current:
-        raise BoardError(f"{issue['id']}: {command} needs it unheld; held by {current}")
+        return refuse('status.row', f"{issue['id']}: {command} needs it unheld; held by {current}")
     if row.held == 'you' and (not current or session_actor(current) != session_actor(actor or caller())):
-        raise BoardError(f"{issue['id']}: {command} needs your session to hold it; held by {current or 'nobody'}")
+        return refuse('status.row', f"{issue['id']}: {command} needs your session to hold it; held by {current or 'nobody'}")
+    return None
 
 
 def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', agreed: frozenset = frozenset()) -> bool:
@@ -484,7 +508,7 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
         if by == 'user':
             return authority_part('attended', issue, actor, board)  # the user's deferral is not autopilot's to undo (762y5)
         return by == session or authority_part('deciding', issue, actor, board)
-    raise BoardError(f'internal: unknown who part {part}')
+    raise fault(f'internal: unknown who part {part}')
 
 
 def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None, board: 'Board | None', agreed: frozenset = frozenset()) -> str | None:
@@ -499,10 +523,11 @@ def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None,
     return f"{issue['id']}: {command} is for {allowed}" + (f"; it is held by {holder}" if holder else '')
 
 
-def table_refusal(board: Board, issue: dict, command: str) -> str | None:
+def table_refusal(board: Board, issue: dict, command: str) -> BoardError | None:
     """The Authority check of `move` for the caller, read before a command writes anything else (the table's Who column is the one owner)."""
     row = next((m for m in MOVES if m.command == command and m.group == group_of(board, issue) and issue['status'] in m.frm), None)
-    return authority_refusal(issue, row, command, acting(), board) if row else None  # no row: `move` refuses it
+    why = authority_refusal(issue, row, command, acting(), board) if row else None  # no row: `move` refuses it
+    return refuse('status.row', why) if why else None
 
 
 HOLDABLE = (CR_TYPE, WORK_TYPE, 'decision', 'milestone')  # the records a session holds (model.md Holding); an item is held with its change request
@@ -547,11 +572,11 @@ def field_pairs(flags: list[str]) -> list[tuple[str, str]]:
     while at < len(flags):
         flag, sep, value = flags[at].partition('=')
         if flag not in FIELD_FLAGS:
-            raise BoardError(f"internal: write_fields writes {', '.join(FIELD_FLAGS)} only, not {flag} (status and holder: move; a parent: move; "
+            raise refuse('fields.allowlist', f"internal: write_fields writes {', '.join(FIELD_FLAGS)} only, not {flag} (status and holder: move; a parent: move; "
                              'bookkeeping metadata: put_meta)')
         if not sep:
             if at + 1 >= len(flags):
-                raise BoardError(f'internal: write_fields: {flag} needs a value')
+                raise bad_input(f'internal: write_fields: {flag} needs a value')
             at += 1
             value = flags[at]
         pairs.append((flag, value))
@@ -565,9 +590,9 @@ def field_values(board: 'Board', ids: list[str], pairs: list[tuple[str, str]], c
     added = [value for flag, value in pairs if flag == '--add-label']
     labels = added + [value for flag, value in pairs if flag == '--remove-label']
     if command not in QUEUE_WRITERS and (refusal := label_refusal(labels)):
-        raise BoardError(refusal)
+        raise refuse('queue.route', refusal)
     if refusal := kind_refusal(added) or label_shape_refusal(added):
-        raise BoardError(refusal)
+        raise refuse('labels.form', refusal)
     settings: dict[str, object] = {}
     for flag, value in pairs:
         if flag not in ('--set-metadata', '--unset-metadata'):
@@ -577,32 +602,32 @@ def field_values(board: 'Board', ids: list[str], pairs: list[tuple[str, str]], c
             continue
         if key not in ITEM_SETTING_KEYS:
             owner = 'move' if key in MOVE_KEYS else 'put_meta' if key in PUT_META_KEYS else 'no board writer'
-            raise BoardError(f'internal: write_fields writes the item settings ({", ".join(ITEM_SETTING_KEYS)}) and send\'s {SENT_AT}, not {key} ({owner})')
+            raise refuse('meta.move-keys' if key in MOVE_KEYS else 'fields.allowlist', f'internal: write_fields writes the item settings ({", ".join(ITEM_SETTING_KEYS)}) and send\'s {SENT_AT}, not {key} ({owner})')
         settings[key] = (given == 'true' if key == NO_COMMIT else given) if flag == '--set-metadata' else None
     if settings:
         if not may_attend(board):
-            raise BoardError('only a lead or solo session or a person changes item settings (planning)')
+            raise refuse('setting.who', 'only a lead or solo session or a person changes item settings (planning)')
         for item_id in ids:
             issue = board.by_id[item_id]
             kind, holder = issue.get('issue_type'), issue.get('assignee')
             if holder:
-                raise BoardError(f'{item_id}: held by {holder}; agents board unclaim or agents board take it first')
+                raise refuse('setting.who', f'{item_id}: held by {holder}; agents board unclaim or agents board take it first')
             if NO_COMMIT in settings and (issue['status'] not in ('open', 'deferred') or board.cr_of(item_id)):
-                raise BoardError(f"{item_id}: {issue['status']}{' in ' + board.cr_of(item_id) if board.cr_of(item_id) else ''}; "
+                raise refuse('setting.who', f"{item_id}: {issue['status']}{' in ' + board.cr_of(item_id) if board.cr_of(item_id) else ''}; "
                                  'its route changes while it is open or deferred outside any change request')
             if set(settings) & set(CR_SETTINGS) and issue['status'] != 'open':
-                raise BoardError(f"{item_id}: {issue['status']}; a change request's settings change while it is open")
+                raise refuse('setting.who', f"{item_id}: {issue['status']}; a change request's settings change while it is open")
             if set(settings) & set(CR_SETTINGS) and kind != CR_TYPE:
-                raise BoardError(f'{item_id}: look and view are change request settings')
+                raise refuse('setting.values', f'{item_id}: look and view are change request settings')
             if refusal := setting_refusal(item_id, kind, {key: value for key, value in settings.items() if value is not None}):
-                raise BoardError(refusal)
+                raise refuse('setting.values', refusal)
     texts = {}
     for flag, value in pairs:
         if flag in LONG_FIELD_FLAGS:
             texts[LONG_FIELD_FLAGS[flag]] = read_text_arg(value) if flag in FILE_FLAGS else value
     for item_id in ids if texts else ():
         if refusal := size_refusal(board.by_id[item_id], texts):
-            raise BoardError(refusal)
+            raise refuse('content.size', refusal)
 
 
 def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str = 'update', actor: str | None = None, write: bool = True) -> None:
@@ -612,9 +637,11 @@ def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str 
     bin/test-agent-configs.py pins the writers."""
     who = acting(actor)
     pairs = field_pairs(flags)
+    labels_only = all(flag in ('--add-label', '--remove-label') for flag, _ in pairs)
     for item_id in ids:
         if refusal := record_write_refusal(board, board.by_id[item_id], command, who):
-            raise BoardError(refusal)
+            item = group_of(board, board.by_id[item_id]) == ITEM_GROUP
+            raise refuse(('labels.hold' if labels_only else 'content.hold') if item else 'held-record.write', refusal)
     field_values(board, ids, pairs, command, who)
     if not write:
         return
@@ -624,22 +651,22 @@ def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str 
 CLOSE_REASON_MIN = 20  # bd refuses a shorter close reason
 
 
-GUARDS = {
-    'reason': lambda issue, board, reason, outcome, together: None if reason and reason.strip() else 'a reason is required',
-    'items-closed': lambda issue, board, reason, outcome, together: board and open_item_refusal(board, issue),
-    'look-before': lambda issue, board, reason, outcome, together: None if board is None or cr_look(board, issue) == 'before' else 'only a look before change request passes without an agent review',
-    'not-open-for-review': lambda issue, board, reason, outcome, together: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None,
-    'no-waiters': lambda issue, board, reason, outcome, together: board and outcome == 'dropped' and dropped_waits_refusal(board, issue['id'], together),
-    'no-dropped-target': lambda issue, board, reason, outcome, together: board and (found := dropped_targets(board, issue['id'])) and (
+GUARDS = {  # name -> (its Write-rules cell, the rule: None or why the move is refused)
+    'reason': ('status.row', lambda issue, board, reason, outcome, together: None if reason and reason.strip() else 'a reason is required'),
+    'items-closed': ('status.items-closed', lambda issue, board, reason, outcome, together: board and open_item_refusal(board, issue)),
+    'look-before': ('status.row', lambda issue, board, reason, outcome, together: None if board is None or cr_look(board, issue) == 'before' else 'only a look before change request passes without an agent review'),
+    'not-open-for-review': ('status.not-open-for-review', lambda issue, board, reason, outcome, together: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None),
+    'no-waiters': ('blocks.no-dropped-close', lambda issue, board, reason, outcome, together: board and outcome == 'dropped' and dropped_waits_refusal(board, issue['id'], together)),
+    'no-dropped-target': ('blocks.reopen', lambda issue, board, reason, outcome, together: board and (found := dropped_targets(board, issue['id'])) and (
         f"it waits on {', '.join(dropped_wait_text(board, b) for b in found)}, which never delivers; unlink it first ({'; '.join(dep_fix(issue['id'], b) for b in found)}) "
-        'or wait on the record that keeps the work'),
-    'not-superseded': lambda issue, board, reason, outcome, together: f'it is superseded by {", ".join(found)}: record a revision to put it back in force' if board and (found := superseding(board, issue['id'])) else None,
-    'ruling-waits': lambda issue, board, reason, outcome, together: board and next(  # blocks.waiter on a status write into in_force
-        filter(None, (wait_target_refusal({**issue, 'status': 'in_force'}, b, board.by_id[b], board)
-                      for b in board.open_blockers(issue['id']) if b in board.by_id)), None),
-    'open-parent': lambda issue, board, reason, outcome, together: board and (cr := board.cr_of(issue['id'])) and cr != issue['id'] and board.by_id.get(cr, {}).get('status') == 'closed' and (
+        'or wait on the record that keeps the work')),
+    'not-superseded': ('supersedes.row', lambda issue, board, reason, outcome, together: f'it is superseded by {", ".join(found)}: record a revision to put it back in force (agents board ruling revise {issue["id"]})' if board and (found := superseding(board, issue['id'])) else None),
+    'settled-premises': ('status.release-holds', lambda issue, board, reason, outcome, together: board and issue['status'] != 'in_force' and release_holds_refusal(board, issue['id'], together)),
+    'no-hung-waiters': ('blocks.target', lambda issue, board, reason, outcome, together: board and (waiting := deferred_waiters(board, issue['id'], set(together))) and (
+        f"{', '.join(waiting)} would hang on it deferred: {deferred_fix(board, issue['id'], waiting)}")),
+    'open-parent': ('status.open-parent', lambda issue, board, reason, outcome, together: board and (cr := board.cr_of(issue['id'])) and cr != issue['id'] and board.by_id.get(cr, {}).get('status') == 'closed' and (
         f'it is an item of {cr}, which is closed (landed or dropped): an open item under it would be reached by no queue; file the work again in an open '
-        'change request (agents board create --parent <change request>). move re-parents only open items'),
+        'change request (agents board create --parent <change request>). move re-parents only open items')),
 }
 
 
@@ -657,43 +684,42 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
     group = group_of(board, issue)
     rows = [m for m in MOVES if m.command == command and m.group == group and issue['status'] in m.frm
             and (to is None or m.to in (to, '='))]
-    if len(rows) != 1:
-        raise BoardError(f"{issue['id']}: {command} does not apply to a {group or issue.get('issue_type')} that is {issue['status']}" if not rows
-                         else f'internal: {len(rows)} rows for {command} of {issue["id"]}')
+    if len(rows) > 1:
+        raise fault(f'internal: {len(rows)} rows for {command} of {issue["id"]}')
+    if not rows:
+        raise refuse('status.row', f"{issue['id']}: {command} does not apply to a {group or issue.get('issue_type')} that is {issue['status']}")
     row = rows[0]
     if outcome and not row.outcomes:
-        raise BoardError(f"{issue['id']}: {command} records no outcome")
+        raise refuse('status.row', f"{issue['id']}: {command} records no outcome")
     if row.outcomes:
         if outcome not in (None, *row.outcomes):
-            raise BoardError(f"{issue['id']}: {command} records {' or '.join(row.outcomes)}, not {outcome}")
+            raise refuse('status.row', f"{issue['id']}: {command} records {' or '.join(row.outcomes)}, not {outcome}")
         fields = {**(fields or {}), 'outcome': outcome or row.outcomes[0]}
     current = issue.get('assignee') or ''
     who = acting(actor)
-    refusal = None
-    try:
-        refuse_held(issue, row, command, who)
-    except BoardError as error:
-        refusal = str(error)
-    if not refusal:
-        refusal = record_write_refusal(board, issue, command, who) if group == ITEM_GROUP \
-            else authority_refusal(issue, row, command, who, board, agreed)
+    refusal = refuse_held(issue, row, command, who)
+    if not refusal and (why := record_write_refusal(board, issue, command, who) if group == ITEM_GROUP
+                        else authority_refusal(issue, row, command, who, board, agreed)):
+        refusal = refuse('status.row', why)
     for name in row.guards if not refusal else ():
-        if why := GUARDS[name](issue, board, reason, fields.get('outcome') if fields else None, together):
-            refusal = why if why.startswith(f"{issue['id']}:") else f"{issue['id']}: {command} refused: {why}"
+        cell, rule = GUARDS[name]
+        if why := rule(issue, board, reason, fields.get('outcome') if fields else None, together):
+            why = str(why)
+            refusal = refuse(cell, why if why.startswith(f"{issue['id']}:") else f"{issue['id']}: {command} refused: {why}")
             break
 
-    def refused(why: str) -> subprocess.CompletedProcess:
+    def refused(error: BoardError) -> subprocess.CompletedProcess:
         if check:
-            raise BoardError(why)
-        return subprocess.CompletedProcess(['move', command, issue['id']], 1, '', why)  # a caller that reads the result sees every refusal as a failed write
+            raise error
+        return subprocess.CompletedProcess(['move', command, issue['id']], 1, '', str(error))  # a caller that reads the result sees every refusal as a failed write
 
     if not refusal and not write and row.to == 'closed' and not force and board is not None:
         # bd's own close validation, seen before any write of the call: open blockers and open children outside it refuse the close.
         held_up = [b for b in board.open_blockers(issue['id']) if b not in together] + \
                   [c for c in board.children.get(issue['id'], []) if board.is_open(c) and c not in together]
         if held_up:
-            refusal = (f"{issue['id']}: {command} refused: {', '.join(held_up)} still open (it waits on them, or they are part of it); "
-                       'close them in the same call, or --force')
+            refusal = refuse('status.row', f"{issue['id']}: {command} refused: {', '.join(held_up)} still open (it waits on them, or they are part of it); "
+                             'close them in the same call, or --force')
     if refusal:
         return refused(refusal)
     if not write:
@@ -713,15 +739,15 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
         if current == closer:  # between this release and the retake another session could claim it: the retake then fails as changed meanwhile, and the holder is put back below
             released = bd('update', issue['id'], '--assignee', '', '--if-assignee', closer, '--if-status', issue['status'], '--json')
             if released.returncode != 0:
-                return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(released)}" if released.returncode == 13
-                               else f"{issue['id']}: {command} failed: {bd_message(released)}")
+                return refused(fault(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(released)}" if released.returncode == 13
+                                      else f"{issue['id']}: {command} failed: {bd_message(released)}"))
             current = ''
         guard = bd('update', issue['id'], '--assignee', closer, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
         if guard.returncode != 0:
             if original == closer:
                 bd('update', issue['id'], '--assignee', original, '--if-assignee', '', '--if-status', issue['status'], '--json')  # the release stands only if the retake won
-            return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(guard)}" if guard.returncode == 13
-                           else f"{issue['id']}: {command} failed: {bd_message(guard)}")
+            return refused(fault(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(guard)}" if guard.returncode == 13
+                                  else f"{issue['id']}: {command} failed: {bd_message(guard)}"))
         result = bd('supersede', issue['id'], '--with', reason or '') if via == 'supersede' else bd('close', issue['id'], '--reason', reason or '', '--force')
         if result.returncode != 0:  # bd refused the close: the record stays open, so the guard's writes are undone: the holder and the metadata it set are put back
             undo = [arg for key in (fields or {}) for arg in (('--set-metadata', f'{key}={meta(issue)[key]}') if key in meta(issue) else ('--unset-metadata', key))]
@@ -729,14 +755,14 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
         holder_after = closer
     elif target == 'closed':
         if via != 'supersede' and len(reason or '') < CLOSE_REASON_MIN:
-            return refused(f"{issue['id']}: {command} refused: bd wants a close reason of {CLOSE_REASON_MIN} or more characters describing what was done ({len(reason or '')} given)")
+            return refused(bad_input(f"{issue['id']}: {command} refused: bd wants a close reason of {CLOSE_REASON_MIN} or more characters describing what was done ({len(reason or '')} given)"))
         # One compare-and-set writes the status, the outcome and the holder (the closer takes a record another actor holds, which bd's close of it requires),
         # and bd validates the close in it (open children, blockers). `bd close` or `bd supersede` then only records the reason.
         holder_closing = current if not current or current == bd_actor() else bd_actor()
         written = bd('update', issue['id'], '--status', 'closed', '--assignee', holder_closing, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
         if written.returncode != 0:
-            return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(written)}" if written.returncode == 13
-                           else f"{issue['id']}: {command} failed: {bd_message(written)}")
+            return refused(fault(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(written)}" if written.returncode == 13
+                                  else f"{issue['id']}: {command} failed: {bd_message(written)}"))
         holder_after = holder_closing
         result = bd('supersede', issue['id'], '--with', reason or '') if via == 'supersede' else bd('close', issue['id'], '--reason', reason or '')
     else:
@@ -744,7 +770,7 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
                     *(['--assignee', holder_after] if holder_after != current or row.holds == '-' else []),
                     '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
     if check and result.returncode != 0:
-        raise BoardError(f"{issue['id']}: {command} failed: {bd_message(result)}")
+        raise fault(f"{issue['id']}: {command} failed: {bd_message(result)}")
     if result.returncode == 0:
         issue.update(status=target, assignee=holder_after)
         if fields:
@@ -1179,7 +1205,7 @@ def bd_show(ids: list[str], *flags: str, comments: bool = True) -> list[dict]:
                 return []
         except (ValueError, AttributeError):
             pass
-        raise BoardError(f"`bd show` failed: {(result.stderr or result.stdout).strip()}")
+        raise fault(f"`bd show` failed: {(result.stderr or result.stdout).strip()}")
     return json.loads(result.stdout or '[]')
 
 
@@ -1188,7 +1214,7 @@ def registrations() -> tuple[list[dict], set[str]]:
     file's session counts as unregistered; the person is told once."""
     result = subprocess.run(['bash', str(REGISTRY), 'list'], capture_output=True, text=True)
     if result.returncode != 0:
-        raise BoardError(f'session registry unreadable: {result.stderr.strip()}')
+        raise fault(f'session registry unreadable: {result.stderr.strip()}')
     rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
     skipped = [row['unreadable'] for row in rows if 'unreadable' in row]
     for file in skipped:
@@ -1486,7 +1512,7 @@ class Board:
         if root is None:
             return self.issues
         if root not in self.by_id and (self.complete or root not in self.edges):  # a closed root: only its edges show
-            raise BoardError(f'unknown root {root}')
+            raise bad_input(f'unknown root {root}')
         if self.by_id.get(root, {}).get('issue_type') == 'milestone':
             work = self.milestone_work(root) | {root}
             return [issue for issue in self.issues if issue['id'] in work]
@@ -2706,7 +2732,7 @@ def related_data(board: Board, args) -> tuple[list[str], list[str], list[tuple[i
             try:
                 lines = file.read_text(encoding='utf-8').splitlines()
             except (OSError, UnicodeDecodeError) as error:
-                raise BoardError(f'cannot read {file}: {error}') from None
+                raise bad_input(f'cannot read {file}: {error}') from None
             matches += [(file, number, text.strip()) for number, text in enumerate(lines, 1)
                         if any(term in text.lower() for term in terms)]
     return terms, chosen, [(count, issue) for _, count, issue in rows], matches
@@ -2868,9 +2894,9 @@ def show_sections(board: Board, issue: dict, query: str) -> list[tuple[str, str]
         or [c for c in candidates if normalized(c[0]).startswith(wanted)]
     names = sorted({name for name, _ in matches})
     if not matches:
-        raise BoardError(f"{issue['id']}: no section {query!r}; sections: " + ', '.join(dict.fromkeys(n for n, _ in candidates)))
+        raise bad_input(f"{issue['id']}: no section {query!r}; sections: " + ', '.join(dict.fromkeys(n for n, _ in candidates)))
     if len(names) > 1:
-        raise BoardError(f"{issue['id']}: section {query!r} is ambiguous:\n" + '\n'.join(
+        raise bad_input(f"{issue['id']}: section {query!r} is ambiguous:\n" + '\n'.join(
             f'  agents board show {issue["id"]} --section {shlex.quote(name)}' for name in names))
     return matches
 
@@ -2917,7 +2943,7 @@ def show(board: Board, args) -> int:
     known = {key for issue in board.issues for key in issue} | ITEM_FIELDS
     unknown = [field for field in args.fields if field not in known]
     if unknown:
-        raise BoardError(f"unknown field {', '.join(unknown)}; fields: {', '.join(sorted(known - {'_type'}))}")
+        raise bad_input(f"unknown field {', '.join(unknown)}; fields: {', '.join(sorted(known - {'_type'}))}")
     if args.json:
         # Whole items without --field: the fields the board holds plus the comments, as the --field form shapes them.
         has_reach = not args.fields or any(field in ('holds', 'holdsAll') for field in args.fields)
@@ -3003,7 +3029,7 @@ def scratch_dir() -> Path:
     """This session's scratch folder (bin/scratch dir)."""
     result = subprocess.run([sys.executable, str(REGISTRY.parent / 'scratch'), 'dir'], capture_output=True, text=True)
     if result.returncode != 0 or not result.stdout.strip():
-        raise BoardError(f'no scratch folder: {(result.stderr or result.stdout).strip()}')
+        raise fault(f'no scratch folder: {(result.stderr or result.stdout).strip()}')
     return Path(result.stdout.strip())
 
 
@@ -3016,7 +3042,7 @@ def field_names(given: list[str]) -> list[str]:
     names = [FIELD_ALIASES.get(name, name) for name in given]
     unknown = [name for name in names if name not in FIELDS]
     if unknown:
-        raise BoardError(f"unknown field {', '.join(unknown)}; fields: {', '.join(FIELDS)}")
+        raise bad_input(f"unknown field {', '.join(unknown)}; fields: {', '.join(FIELDS)}")
     return list(dict.fromkeys(names)) or list(FIELDS)
 
 
@@ -3025,7 +3051,7 @@ class FieldFolder:
 
     def __init__(self, item_id: str):
         if not re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z._-]*', item_id) or '..' in item_id:
-            raise BoardError(f'{item_id!r} is not an item id')
+            raise bad_input(f'{item_id!r} is not an item id')
         self.id = item_id
         self.folder = scratch_dir() / 'fields' / item_id
         try:
@@ -3071,7 +3097,7 @@ def field_export(board: Board, args) -> int:
     folders = {item_id: FieldFolder(item_id) for item_id in dict.fromkeys(args.ids)}
     kept = [(item_id, name) for item_id, folder in folders.items() for name in names if folder.edited(name)]
     if kept:
-        raise BoardError('; '.join(f'{item_id} {name}: the export was edited since and not applied (agents board field apply {item_id} --field {name}, '
+        raise bad_input('; '.join(f'{item_id} {name}: the export was edited since and not applied (agents board field apply {item_id} --field {name}, '
                                    f'or agents board field discard {item_id} --field {name})' for item_id, name in kept) + '; nothing exported')
     for item_id, folder in folders.items():
         for name in names:
@@ -3088,14 +3114,14 @@ def field_apply_one(board: Board, item_id: str, names: list[str] | None) -> list
     """Writes one item's edited exports with one `bd update`; the lines it printed. Refuses the whole item (files kept) when a field
     changed on the board since its export, an edited file is empty, or the size limit holds a field back."""
     if item_id not in board.by_id:
-        raise BoardError(f'{item_id}: unknown')
+        raise bad_input(f'{item_id}: unknown')
     folder = FieldFolder(item_id)
     exported = [name for name in FIELDS if name in folder.base]
     chosen = exported if names is None else names
     absent = [name for name in chosen if name not in exported]
     if absent or not chosen:
         flags = ''.join(f' --field {name}' for name in absent)
-        raise BoardError(f"{item_id}: no export of {', '.join(absent) or 'any field'}: re-export with agents board field export {item_id}{flags} "
+        raise bad_input(f"{item_id}: no export of {', '.join(absent) or 'any field'}: re-export with agents board field export {item_id}{flags} "
                          f"or discard with agents board field discard {item_id}{flags}")
     issue, lines, changes = board.by_id[item_id], [], {}
     texts = {}
@@ -3103,16 +3129,16 @@ def field_apply_one(board: Board, item_id: str, names: list[str] | None) -> list
         try:
             texts[name] = folder.path(name).read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError) as error:
-            raise BoardError(f'{item_id}: cannot read the export of {name} ({error}); re-export with agents board field export {item_id} --field {name} '
+            raise bad_input(f'{item_id}: cannot read the export of {name} ({error}); re-export with agents board field export {item_id} --field {name} '
                              f'or discard with agents board field discard {item_id} --field {name}') from None
     edited = [name for name in chosen if field_digest(texts[name]) != folder.base[name]]
     moved = [name for name in edited if field_digest(issue.get(FIELDS[name]) or '') != folder.base[name]]  # an unedited field is not written: it may move
     if moved:
-        raise BoardError(f"{item_id}: {', '.join(moved)} changed on the board since the export; nothing applied, your files stay: "
+        raise refuse('content.export', f"{item_id}: {', '.join(moved)} changed on the board since the export; nothing applied, your files stay: "
                          f"copy what you need, agents board field discard {item_id} --field {', '.join(moved)}, agents board field export {item_id} --field {', '.join(moved)}, edit again")
     empty = [name for name in edited if not texts[name].strip()]
     if empty:
-        raise BoardError(f'{item_id}: the export of {empty[0]} is empty: a field is never cleared this way; edit the text instead; nothing applied')
+        raise refuse('content.export', f'{item_id}: the export of {empty[0]} is empty: a field is never cleared this way; edit the text instead; nothing applied')
     for name in chosen:
         if name in edited:
             changes[name] = texts[name]
@@ -3129,7 +3155,7 @@ def field_apply_one(board: Board, item_id: str, names: list[str] | None) -> list
         try:
             write_fields(board, [item_id], flags)  # the hold and the size limit (content.hold, content.size) are write_fields' rules
         except BoardError as error:
-            raise BoardError(f'{error} Nothing applied for {item_id}; your files stay.') from None
+            raise combined([error], f'{error} Nothing applied for {item_id}; your files stay.') from None
         for name, text in changes.items():
             old = issue.get(FIELDS[name]) or ''
             folder.drop(name)
@@ -3210,9 +3236,10 @@ def budgeted(run, board: Board, args, argv: list[str]) -> int:
 # Writes
 
 def caller() -> str:
-    actor = derived_actor()
+    """The session a session-only verb acts for: a session whose actor cannot be derived is refused (actor.none), a person's terminal has none."""
+    actor = acting()
     if not actor:
-        raise BoardError('no actor: run inside a Claude Code or Codex session, or set BEADS_ACTOR')
+        raise bad_input('no actor: run inside a Claude Code or Codex session, or set BEADS_ACTOR')
     return actor
 
 
@@ -3226,7 +3253,7 @@ AUTHOR = 'author'  # metadata: the actor that handed the change request over, wr
 RESUME_NOTE = 'resume'  # metadata: the next action of work handed back unfinished; the next claim prints and clears it
 
 
-def self_review_refusal(issue: dict, actor: str, agreed: bool = False) -> str | None:
+def self_review_refusal(issue: dict, actor: str, agreed: bool = False) -> BoardError | None:
     """Why this actor may not review the change request in review: it handed it over, or it is the session whose worker did (it
     briefed that worker); another worker of the session starts fresh and may. The user's word (`agreed`) lifts it. No recorded
     author fails closed."""
@@ -3234,10 +3261,10 @@ def self_review_refusal(issue: dict, actor: str, agreed: bool = False) -> str | 
         return None
     author = meta(issue).get(AUTHOR)
     if not author:
-        return f"{issue['id']}: no author is recorded for its hand-over, so its independence cannot be shown: /board-migrate records it"
+        return refuse('status.row', f"{issue['id']}: no author is recorded for its hand-over, so its independence cannot be shown: /board-migrate records it")
     if actor in (author, session_actor(author)):
-        return (f"{issue['id']}: your own hand-over (by {author}) needs a fresh worker as reviewer, or the user's word: "
-                f'agents board claim {issue["id"]} --agreed "<what they said>"')
+        return refuse('status.row', f"{issue['id']}: your own hand-over (by {author}) needs a fresh worker as reviewer, or the user's word: "
+                      f'agents board claim {issue["id"]} --agreed "<what they said>"')
     return None
 
 
@@ -3299,7 +3326,7 @@ def own_entry(board: Board, actor: str) -> dict | None:
     but cannot be read is no such session: claims and takeovers are refused until it registers again."""
     entry = board.registry().get(session_actor(actor))
     if entry is None and session_actor(actor) in board.unreadable():
-        raise BoardError("this session's registration is unreadable. Register again: /role <role> (Codex: $role <role>)")
+        raise fault("this session's registration is unreadable. Register again: /role <role> (Codex: $role <role>)")
     return entry
 
 
@@ -3477,7 +3504,7 @@ def in_work(cr: dict) -> bool:
     return cr['status'] == 'open' and bool(cr.get('assignee')) and meta(cr).get(HOLD) == 'work'
 
 
-def foreign_claim(board: Board, item_id: str) -> str | None:
+def foreign_claim(board: Board, item_id: str) -> BoardError | None:
     """Why this item can't be claimed from this queue, with the move that allows it: another person's queue, or none
     (unrouted, an inbox item included) until a lead routes it."""
     if shared is None:
@@ -3488,8 +3515,8 @@ def foreign_claim(board: Board, item_id: str) -> str | None:
     if queue is None:
         names = ','.join(board.queues(item_id))
         why = f'parents in queues {names}' if names else 'no queue'
-        return f'{item_id}: unrouted ({why}); a lead or solo session routes it first: agents board route <person> {item_id}'
-    return f"{item_id}: in {queue}'s queue; a lead or solo session moves it first: agents board route {mine or '<you>'} {item_id}"
+        return refuse('queue.claim', f'{item_id}: unrouted ({why}); a lead or solo session routes it first: agents board route <person> {item_id}')
+    return refuse('queue.claim', f"{item_id}: in {queue}'s queue; a lead or solo session moves it first: agents board route {mine or '<you>'} {item_id}")
 
 
 def mark_forced(issue: dict, actor: str, reason: str | None) -> None:
@@ -3551,9 +3578,9 @@ def watch_command(board: Board, args) -> int:
 def claim_kinds(board: Board, entry: dict | None, actor: str) -> tuple[str, ...]:
     """The kinds a bare claim takes from: the calling session's pulls (the refusals a bare claim and `board watch` share)."""
     if entry is None:
-        raise BoardError(f'no registered role for session {session_actor(actor)}; run /role first')
+        raise fault(f'no registered role for session {session_actor(actor)}; run /role first')
     if shared is not None and person() is None:
-        raise BoardError(f'a bare claim takes from your queue: {PERSON_HELP}')
+        raise fault(f'a bare claim takes from your queue: {PERSON_HELP}')
     return session_kinds(entry)
 
 
@@ -3585,7 +3612,7 @@ def claim(board: Board, args) -> int:
         for item_id in args.ids:
             issue = board.by_id.get(item_id)
             if issue is None or issue['status'] == 'closed':
-                raise BoardError(f'{item_id}: unknown or closed')
+                raise bad_input(f'{item_id}: unknown or closed')
         for item_id in args.ids:
             issue = board.by_id[item_id]
             holder = issue.get('assignee')
@@ -3681,9 +3708,9 @@ def claim(board: Board, args) -> int:
                 print(f'{item_id}: not claimed: {message}', file=sys.stderr)
     else:
         if args.force is not None:
-            raise BoardError('--force holds a named item past your worker cap: agents board claim <id> --force "<reason>"')
+            raise bad_input('--force holds a named item past your worker cap: agents board claim <id> --force "<reason>"')
         if args.agreed is not None:
-            raise BoardError('--agreed names the change request you review on the user\'s word: agents board claim <id> --agreed "<what they said>"')
+            raise bad_input('--agreed names the change request you review on the user\'s word: agents board claim <id> --agreed "<what they said>"')
         kinds, passed = claim_kinds(board, entry, actor), []
         scoped = board.listed(args.root)
         for issue in claim_candidates(board, scoped, kinds, actor, entry, passed):
@@ -3752,26 +3779,26 @@ def item_of(board: Board, issue: dict) -> str | None:
     return board.cr_of(issue['id']) if issue.get('issue_type') == WORK_TYPE else None
 
 
-def item_hold_refusal(board: Board, issue: dict) -> str | None:
+def item_hold_refusal(board: Board, issue: dict) -> BoardError | None:
     """An item has no holder of its own: its change request holds it. A hold left on one from before is cleared by /board-migrate."""
     if item_cr := item_of(board, issue):
-        return (f"{issue['id']}: an item has no holder of its own; its change request {item_cr} holds it: agents board claim {item_cr}, "
-                'then close the item when it is done')
+        return refuse('assignee.work-needs-cr', f"{issue['id']}: an item has no holder of its own; its change request {item_cr} holds it: "
+                      f'agents board claim {item_cr}, then close the item when it is done')
     return None
 
 
-def work_item_refusal(board: Board, issue: dict, actor: str) -> str | None:
+def work_item_refusal(board: Board, issue: dict, actor: str) -> BoardError | None:
     """A task is claimed outside any change request only when it commits nothing here (an item is held with its change request)."""
     if issue.get('issue_type') != WORK_TYPE or is_no_commit(issue):
         return None
-    return f"{issue['id']}: outside any change request; put it in one: agents board move {issue['id']} --to <change request>"
+    return refuse('assignee.work-needs-cr', f"{issue['id']}: outside any change request; put it in one: agents board move {issue['id']} --to <change request>")
 
 
 def refuse_long_comment(text: str) -> None:
     """comments.size, run by comment() and, before their first write, by the verbs whose comment follows other writes."""
     refusal = comment_refusal(len(text))
     if refusal:
-        raise BoardError(refusal)
+        raise refuse('comments.size', refusal)
 
 
 def comment(item_id: str, text: str, packet: bool = False) -> None:
@@ -3786,18 +3813,18 @@ def comment(item_id: str, text: str, packet: bool = False) -> None:
 def require_open(board: Board, ids: list[str]) -> list[dict]:
     missing = [item_id for item_id in ids if not board.is_open(item_id)]
     if missing:
-        raise BoardError(f"unknown or closed: {', '.join(missing)}")
+        raise bad_input(f"unknown or closed: {', '.join(missing)}")
     return [board.by_id[item_id] for item_id in ids]
 
 
-def elsewhere_refusal(board: Board, issue: dict, verb: str, agreed: str | None) -> str | None:
+def elsewhere_refusal(board: Board, issue: dict, verb: str, agreed: str | None) -> BoardError | None:
     """A shared board's hold by a session outside this machine's registry: only its person frees it, so `take` and `unclaim` refuse
     without `--agreed` (beads-setup.md Shared boards)."""
     holder = issue.get('assignee') or ''
     if shared is None or agreed or not ACTOR.fullmatch(holder) or session_actor(holder) in board.registry():
         return None
-    return (f"{issue['id']}: held elsewhere by {holder}, updated {age(board.last_activity(issue))} ago: ask its person; "
-            f'with their agreement: board {verb} {issue["id"]} --agreed "<what they said>"')
+    return refuse('assignee.stale-evidence', f"{issue['id']}: held elsewhere by {holder}, updated {age(board.last_activity(issue))} ago: ask its person; "
+                  f'with their agreement: board {verb} {issue["id"]} --agreed "<what they said>"')
 
 
 def take_text(actor: str, previous: str, agreed: str | None) -> str:
@@ -3813,9 +3840,9 @@ def take(board: Board, args) -> int:
     for issue in require_open(board, args.ids):
         refusal = item_hold_refusal(board, issue) or foreign_claim(board, issue['id']) or elsewhere_refusal(board, issue, 'take', args.agreed)
         if refusal:
-            raise BoardError(refusal)
+            raise refusal
         if board.is_cr(issue['id']) and (refusal := self_review_refusal(issue, actor)):
-            raise BoardError(refusal)
+            raise refusal
         previous = issue.get('assignee') or 'nobody'
         if previous == actor:
             print(f"{issue['id']}: already held by {actor}")
@@ -3850,7 +3877,7 @@ def unclaim(board: Board, args) -> int:
         if args.resume:
             refuse_long_comment(RESUME + args.resume)
         if args.deep_review and not (board.is_cr(issue['id']) and holds_cr(issue, actor)):
-            raise BoardError(f"{issue['id']}: --deep-review escalates a change request you hold for review; held by {issue.get('assignee') or 'nobody'}")
+            raise refuse('meta.deep-review', f"{issue['id']}: --deep-review escalates a change request you hold for review; held by {issue.get('assignee') or 'nobody'}")
     for issue in require_open(board, args.ids):
         holder = issue.get('assignee')
         if not holder:
@@ -3885,8 +3912,6 @@ def unclaim(board: Board, args) -> int:
                 pass
         if args.resume:
             comment(issue['id'], RESUME + args.resume)
-        if not args.deep_review and not args.resume and DEEP_REVIEW in meta(issue):  # the deep review ends here; --resume pauses it (nixes-eitq9)
-            put_meta(issue, **{DEEP_REVIEW: None})
         print(f"unclaimed {issue['id']} from {holder} ({issue['status']})")
     return 1 if failed else 0
 
@@ -3894,7 +3919,7 @@ def unclaim(board: Board, args) -> int:
 def held(board: Board, item_id: str, actor: str, status: str | None = None) -> dict:
     issue = require_open(board, [item_id])[0]
     if issue.get('assignee') != actor or (status and issue['status'] != status):
-        raise BoardError(f"{item_id}: {issue['status']}, held by {issue.get('assignee') or 'nobody'}; claim it first")
+        raise refuse('status.record', f"{item_id}: {issue['status']}, held by {issue.get('assignee') or 'nobody'}; claim it first")
     return issue
 
 
@@ -3903,7 +3928,7 @@ def git(root: Path, *args: str, env: dict[str, str] | None = None, check: bool =
     result = subprocess.run(['git', '-C', str(root), *args], capture_output=True, env={**os.environ, **(env or {})},
                             input=input.encode() if input is not None else None)
     if check and result.returncode != 0:
-        raise BoardError(f"git {' '.join(args[:2])}: {result.stderr.decode('utf-8', 'replace').strip() or 'exit ' + str(result.returncode)}")
+        raise fault(f"git {' '.join(args[:2])}: {result.stderr.decode('utf-8', 'replace').strip() or 'exit ' + str(result.returncode)}")
     return result
 
 
@@ -3936,7 +3961,7 @@ def put_meta(issue: dict, **fields) -> None:
     replace what a concurrent writer set. The board's bookkeeping only (meta.allowlist): an item setting (no_commit, look, view) is an item
     field under the hold rule, written by write_fields, and move's keys go with its rows."""
     if others := [key for key in fields if key not in PUT_META_KEYS]:
-        raise BoardError(f"internal: put_meta writes the board's bookkeeping (PUT_META_KEYS), not {', '.join(others)}: "
+        raise refuse('meta.allowlist', f"internal: put_meta writes the board's bookkeeping (PUT_META_KEYS), not {', '.join(others)}: "
                          "move writes status keys, the hold and the resume note; write_fields the item settings and sent_at")
     if not isinstance(issue.get('metadata'), dict):
         issue['metadata'] = {}
@@ -3970,9 +3995,9 @@ def board_setting(board: Board, name: str) -> str:
     value = board.settings[name].strip()
     allowed = {'look': LOOKS, 'view': VIEWS}.get(name)
     if not value:
-        raise BoardError(f'{key} is not set: agents board setup --{name} <{"|".join(allowed) if allowed else "value"}>')
+        raise fault(f'{key} is not set: agents board setup --{name} <{"|".join(allowed) if allowed else "value"}>')
     if allowed and value not in allowed:
-        raise BoardError(f"{key} is {value!r}, not one of {', '.join(allowed)}: agents board setup --{name} <value>")
+        raise fault(f"{key} is {value!r}, not one of {', '.join(allowed)}: agents board setup --{name} <value>")
     return value
 
 
@@ -3995,14 +4020,14 @@ def require_model() -> None:
     if beads_dir() is None or (value := current_setting(MODEL_KEY)) == MODEL:
         return
     if value.isdigit() and int(value) > int(MODEL):
-        raise BoardError(f'this board is on model {value}, newer than this checkout\'s {MODEL}: update the agents checkout. Reads still work')
-    raise BoardError(f'this board is not on the current model ({MODEL_KEY} is not {MODEL}): run /board-migrate. Reads still work; board bd --raw is migrate\'s way in')
+        raise fault(f'this board is on model {value}, newer than this checkout\'s {MODEL}: update the agents checkout. Reads still work')
+    raise fault(f'this board is not on the current model ({MODEL_KEY} is not {MODEL}): run /board-migrate. Reads still work; board bd --raw is migrate\'s way in')
 
 
 def cr_look(board: Board, cr: dict) -> str:
     value = meta(cr).get('look') or board_setting(board, 'look')
     if value not in LOOKS:
-        raise BoardError(f"{cr['id']}: look {value!r} is not one of {', '.join(LOOKS)}")
+        raise fault(f"{cr['id']}: look {value!r} is not one of {', '.join(LOOKS)}")
     return value
 
 
@@ -4015,7 +4040,7 @@ def main_root() -> Path:
     result = subprocess.run(['git', 'worktree', 'list', '--porcelain'], capture_output=True, text=True)
     first = result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else ''
     if not first.startswith('worktree '):
-        raise BoardError('not inside a git repository')
+        raise fault('not inside a git repository')
     return Path(first.removeprefix('worktree '))
 
 
@@ -4080,7 +4105,7 @@ def target_branch(board: Board, main: Path) -> str:
     if name not in board._ref_format:  # a property of the name alone
         board._ref_format[name] = git(main, 'check-ref-format', '--branch', name, check=False).returncode == 0
     if not board._ref_format[name] or view_rev(board, main, f'refs/heads/{name}') is None:
-        raise BoardError(f"{SETTINGS['target']} {name!r} is not a local branch: agents board setup --target <branch>")
+        raise fault(f"{SETTINGS['target']} {name!r} is not a local branch: agents board setup --target <branch>")
     return name
 
 
@@ -4232,10 +4257,10 @@ def base_failures(board: Board, cr: dict, main: Path, base_tip: str) -> dict[tup
         try:
             code, out = run_shell(path, setup)
             if code:
-                raise BoardError(f'{cr["id"]}: setup failed at the base commit {base_tip[:12]}, so its failures are unknown:\n{out}')
+                raise fault(f'{cr["id"]}: setup failed at the base commit {base_tip[:12]}, so its failures are unknown:\n{out}')
             base_code, stdout, full = run_check(path, checks)
             if base_code not in (0, 1) or (base_code == 1 and not failure_counts(stdout)):
-                raise BoardError(f'{cr["id"]}: the check is broken at the base commit {base_tip[:12]} (exit {base_code}), so its failures are unknown:\n{tail(full)}')
+                raise fault(f'{cr["id"]}: the check is broken at the base commit {base_tip[:12]} (exit {base_code}), so its failures are unknown:\n{tail(full)}')
         finally:
             git(main, 'worktree', 'remove', '--force', str(path), check=False)
         found = failure_counts(stdout)
@@ -4576,10 +4601,10 @@ def refuse_unrecorded(cid: str, review: dict, then: str) -> None:
     """The one refusal of a verdict that would pass the user's edits unrecorded (or an unreadable review): `then` is the step that
     records them."""
     if review['edited'] is None:
-        raise BoardError(f"{cid}: your review cannot be read: {review['why']}")
+        raise fault(f"{cid}: your review cannot be read: {review['why']}")
     if review['edited']:
         shown = ', '.join(review['files'][:5]) + (' and more' if len(review['files']) > 5 else '')
-        raise BoardError(f"{cid}: your review holds edits ({shown or 'commits'}): {then}")
+        raise refuse('meta.review-unrecorded', f"{cid}: your review holds edits ({shown or 'commits'}): {then}")
 
 
 def open_refusal(cid: str, cr: dict, step: str) -> str | None:
@@ -4591,7 +4616,7 @@ def open_refusal(cid: str, cr: dict, step: str) -> str | None:
 
 def refuse_open(cid: str, cr: dict, step: str) -> None:
     if refusal := open_refusal(cid, cr, step):
-        raise BoardError(refusal)
+        raise refuse('status.not-open-for-review', refusal)
 
 
 def stopped_on_user_edit(board: Board, cr: dict) -> bool:
@@ -4960,9 +4985,9 @@ def open_worktree(board: Board, cr: dict, main: Path, start: str | None = None) 
         head = git(path, 'rev-parse', '--abbrev-ref', 'HEAD', check=False).stdout.decode().strip()
         stuck = in_progress_state(path, cr)
         if stuck:
-            raise BoardError(f'{cid}: {path} is mid {stuck} the board did not start: its owner finishes or aborts it, then claim again')
+            raise fault(f'{cid}: {path} is mid {stuck} the board did not start: its owner finishes or aborts it, then claim again')
         if head != branch and not own_rebase(path, cr):  # detached mid the board's own rebase is the CR's (`sync_branch` resumes it)
-            raise BoardError(f'{cid}: {path} exists but is on {head or "no branch"}, not {branch}: remove or fix it, then claim again')
+            raise fault(f'{cid}: {path} exists but is on {head or "no branch"}, not {branch}: remove or fix it, then claim again')
         adopt_stack_base(board, cr)
         return False, None
     if rev(main, f'refs/heads/{branch}'):
@@ -4977,7 +5002,7 @@ def open_worktree(board: Board, cr: dict, main: Path, start: str | None = None) 
         ref = f'refs/heads/{base_value}'
     tip = start or rev(main, ref)
     if tip is None:
-        raise BoardError(f'{cid}: base {base_value} has no branch')
+        raise fault(f'{cid}: base {base_value} has no branch')
     git(main, 'worktree', 'add', '-b', branch, str(path), tip)
     put_meta(cr, base=base_value, base_sha=tip)
     return True, tip
@@ -5039,14 +5064,14 @@ def resume_rebase(cr: dict, wt: Path) -> dict | None:
         return None
     cid = cr['id']
     if git_text(wt, 'diff', '--name-only', '--diff-filter=U').split():
-        raise BoardError(f'{cid}: the rebase the board started is still stopped on a conflict in {wt}: {user_edit_conflict(cr, wt)}{conflict_files(wt)}resolve it, '
+        raise fault(f'{cid}: the rebase the board started is still stopped on a conflict in {wt}: {user_edit_conflict(cr, wt)}{conflict_files(wt)}resolve it, '
                          'git add the files, then rerun this command (it continues the rebase)')
     started, fork = meta(cr).get('rebase_from'), meta(cr).get('base_sha')
     stopped, onto = rev(wt, 'REBASE_HEAD'), rebase_target(wt)  # what the rebase stopped on, before it continues
     done = git(wt, 'rebase', '--continue', env={'GIT_EDITOR': 'true'}, check=False)
     if done.returncode != 0:
         detail = (done.stderr or done.stdout).decode('utf-8', 'replace').strip()
-        raise BoardError(f'{cid}: git rebase --continue stopped in {wt}: {conflict_files(wt)}{detail}; resolve it, git add the files, '
+        raise fault(f'{cid}: git rebase --continue stopped in {wt}: {conflict_files(wt)}{detail}; resolve it, git add the files, '
                          'then rerun this command')
     main = cr_worktree_main(wt)
     if stopped and onto and user_edit_entry(main, cr, stopped):  # the merge of a conflict on the user's edit: theirs only once they confirm it
@@ -5065,11 +5090,11 @@ def sync_branch(board: Board, cr: dict, main: Path, wt: Path, check: bool = True
     resumed = resume_rebase(cr, wt)
     problem = tree_problem(wt)
     if problem:
-        raise BoardError(f'{cid}: {problem}')
+        raise fault(f'{cid}: {problem}')
     base_value, ref = cr_base(board, cr, main)
     base_tip = rev(main, ref)
     if base_tip is None:
-        raise BoardError(f'{cid}: base {base_value} has no branch')
+        raise fault(f'{cid}: base {base_value} has no branch')
     fork = meta(cr).get('base_sha') or git_text(wt, 'merge-base', base_tip, 'HEAD').strip()
     old_tip, moved = rev(wt, 'HEAD'), None
     if resumed:  # the rebase this call finished: report the range it moved, not the finished branch
@@ -5087,14 +5112,14 @@ def sync_branch(board: Board, cr: dict, main: Path, wt: Path, check: bool = True
             moved = fork
             put_meta(cr, rebase_onto=base_tip, rebase_from=old_tip)
             if git(wt, 'rebase', '--onto', base_tip, fork, check=False).returncode != 0:
-                raise BoardError(f'{cid}: the rebase onto {base_tip[:12]} stopped on a conflict in {wt}: {user_edit_conflict(cr, wt)}{conflict_files(wt)}resolve it, '
+                raise fault(f'{cid}: the rebase onto {base_tip[:12]} stopped on a conflict in {wt}: {user_edit_conflict(cr, wt)}{conflict_files(wt)}resolve it, '
                                  'git add the files, then rerun this command (it continues the rebase)')
     put_meta(cr, base=base_value, base_sha=base_tip, rebase_onto=None, rebase_from=None)
     fetch_board(main)  # the branch moved: a review folder's Incoming and Outgoing follow
     head = rev(wt, 'HEAD')
     failure = ensure_setup(board, cr, wt)
     if failure is not None:
-        raise BoardError(f'{cid}: setup failed (the claim stays; hand-over waits until it passes):\n{failure}')
+        raise fault(f'{cid}: setup failed (the claim stays; hand-over waits until it passes):\n{failure}')
     if not check:  # the caller stores its own targeted check for this tip
         board._cr.pop(cid, None)
         return {'oldTip': old_tip, 'oldBase': resumed['fork'] if resumed else fork, 'moved': moved is not None, 'baseTip': base_tip, 'tip': rev(wt, 'HEAD'), 'code': 0, 'output': ''}
@@ -5106,7 +5131,7 @@ def sync_branch(board: Board, cr: dict, main: Path, wt: Path, check: bool = True
     code = 0 if passed else 1
     tip = rev(wt, 'HEAD')
     if tip != head or tree_problem(wt):  # the pair must name the tree that was checked (F8)
-        raise BoardError(f'{cid}: setup or the checks changed the worktree (a commit, or uncommitted files); nothing was recorded: '
+        raise fault(f'{cid}: setup or the checks changed the worktree (a commit, or uncommitted files); nothing was recorded: '
                          f'{tree_problem(wt) or "HEAD moved from " + head[:12] + " to " + tip[:12]}')
     put_meta(cr, check_tip=tip, check_base_tip=base_tip, check_result='pass' if passed else 'fail', check_at=stamp(), check_output=out or None,
              check_new=('\n'.join(detail['new']) or '-') if detail else None, check_base_count=detail['base'] if detail else None,
@@ -5156,9 +5181,10 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str, agreed: bool = False
     return True, ''
 
 
-def open_item_refusal(board: Board, cr: dict) -> str | None:
+def open_item_refusal(board: Board, cr: dict) -> BoardError | None:
+    """status.items-closed: move's guard items-closed, and the check handover, land_core and prepare_land make before their checks run."""
     items = board.cr_items(cr['id'])
-    return f"{cr['id']}: items still open: {', '.join(i['id'] for i in items)}; close them (agents board close {' '.join(i['id'] for i in items)} --reason \"<sha>: …\"), or the planner moves one out (agents board move <item> --to <change request>)" if items else None
+    return refuse('status.items-closed', f"{cr['id']}: items still open: {', '.join(i['id'] for i in items)}; close them (agents board close {' '.join(i['id'] for i in items)} --reason \"<sha>: …\"), or the planner moves one out (agents board move <item> --to <change request>)") if items else None
 
 
 class LandedError(BoardError):
@@ -5250,15 +5276,14 @@ def land_core(board: Board, cr: dict, main: Path, tip: str, base_tip: str) -> li
     cid = cr['id']
     base, _ = cr_base(board, cr, main)
     if board.is_cr(base):
-        raise BoardError(f'{cid}: stacked on {base}, which has not landed: agents board cr land {base} first')
-    refusal = open_item_refusal(board, cr)
-    if refusal:
-        raise BoardError(refusal)
+        raise refuse('status.landing', f'{cid}: stacked on {base}, which has not landed: agents board cr land {base} first')
+    if refusal := open_item_refusal(board, cr):
+        raise refusal
     name = target_branch(board, main)
     ref = f'refs/heads/{name}'
     branch_tip, old = rev(main, f'refs/heads/{cr_branch(cid)}'), rev(main, ref)
     if branch_tip is None:
-        raise BoardError(f'{cid}: no branch {cr_branch(cid)}')
+        raise fault(f'{cid}: no branch {cr_branch(cid)}')
     if rev(main, tip) != branch_tip:
         raise pair_moved_refusal(cid, 'branch', tip, branch_tip, old)
     if old != base_tip:
@@ -5270,25 +5295,25 @@ def land_core(board: Board, cr: dict, main: Path, tip: str, base_tip: str) -> li
     pair = check_pair(cr)
     if pair is None or pair['result'] != 'pass' or pair['tip'] != branch_tip or pair['baseTip'] != old:
         state = check_state(main, cr, branch_tip, old)
-        raise BoardError(f'{cid}: not landed, its check is {state} (it must pass for tip {branch_tip[:12]} on {name} {old[:12]}): {refresh_step}',
+        raise refuse('status.landing', f'{cid}: not landed, its check is {state} (it must pass for tip {branch_tip[:12]} on {name} {old[:12]}): {refresh_step}',
                          next=[{'action': 'refresh', 'command': refresh_step}])
     if not accept_covered(cr, {'tip': branch_tip, 'baseTip': old, 'main': main}):
         if cr['status'] == PASSED:
             send_to_review(board, cr)
-            raise BoardError(f'{cid}: the series changed since its last review; sent to agent review', next=[{'action': 'wait'}])
-        raise BoardError(f'{cid}: the series changed since its last review; review the current change',
+            raise refuse('status.landing', f'{cid}: the series changed since its last review; sent to agent review', next=[{'action': 'wait'}])
+        raise refuse('status.landing', f'{cid}: the series changed since its last review; review the current change',
                          next=[{'action': 'review', 'text': f'review the current change, then pass it again (agents board handover {cid} "<evidence>")'}])
     where, rebasing = checked_out_at(main, ref)
     if rebasing:
-        raise BoardError(f'{cid}: not landed, {rebasing}')
+        raise fault(f'{cid}: not landed, {rebasing}')
     blocked = land_blocked(main, name, branch_tip)
     if blocked:
-        raise BoardError(f"{cid}: land blocked: uncommitted edits in the worktree with {name} checked out overlap: {', '.join(blocked)}; they are the user's: ask the user to commit or move them, and do not restore or stash them yourself")
+        raise fault(f"{cid}: land blocked: uncommitted edits in the worktree with {name} checked out overlap: {', '.join(blocked)}; they are the user's: ask the user to commit or move them, and do not restore or stash them yourself")
     put_meta(cr, landing=branch_tip, **({OPENED: None} if review else {}))  # vouches for this tip: if the close fails after the fast-forward, the next read finishes it
     done = git(where, 'merge', '--ff-only', branch_tip, check=False) if where else git(main, 'update-ref', ref, branch_tip, old, check=False)
     if done.returncode != 0:
         put_meta(cr, landing=None)
-        raise BoardError(f"{cid}: the fast-forward of {name} failed: {done.stderr.decode('utf-8', 'replace').strip() or 'exit ' + str(done.returncode)}")
+        raise fault(f"{cid}: the fast-forward of {name} failed: {done.stderr.decode('utf-8', 'replace').strip() or 'exit ' + str(done.returncode)}")
     after = [other for other in live_crs(board) if after_base(board, other) == cid]  # before their base is reset to the target
     try:
         notes = finish_landing(board, cr, branch_tip, name, main)
@@ -5314,7 +5339,7 @@ def cr_arg(board: Board, item_id: str, verb: str) -> dict:
     issue = require_open(board, [item_id])[0]
     if not board.is_cr(item_id):
         cr_id = board.cr_of(item_id)
-        raise BoardError(f"{item_id}: board {verb} works on change requests" + (f"; its change request is {cr_id}" if cr_id else ''))
+        raise bad_input(f"{item_id}: board {verb} works on change requests" + (f"; its change request is {cr_id}" if cr_id else ''))
     return issue
 
 
@@ -5334,36 +5359,35 @@ def handover(board: Board, args) -> None:
     cr = cr_arg(board, args.id, 'handover')
     holder = cr.get('assignee')
     if not holds_cr(cr, actor):
-        raise BoardError(f"{args.id}: {cr['status']}, held by {holder or 'nobody'}; claim it first",
+        raise refuse('status.handover', f"{args.id}: {cr['status']}, held by {holder or 'nobody'}; claim it first",
                          next=[{'action': 'wait'} if holder else {'action': 'claim', 'command': f'agents board claim {args.id}'}])
     m, status = meta(cr), cr['status']
     author = status == 'open'
     if author and not in_work(cr):
-        raise BoardError(f'{args.id}: held for planning, not in work; claim it for work first: agents board claim {args.id}',
+        raise refuse('status.handover', f'{args.id}: held for planning, not in work; claim it for work first: agents board claim {args.id}',
                          next=[{'action': 'claim', 'command': f'agents board claim {args.id}'}])
     if not author and status != 'in_review':
-        raise BoardError(f'{args.id}: {status}; only work in hand is handed over or an agent review is passed (use agents board cr request-review at Accept)',
+        raise refuse('status.handover', f'{args.id}: {status}; only work in hand is handed over or an agent review is passed (use agents board cr request-review at Accept)',
                          next=[{'action': 'review', 'command': f'agents board cr request-review {args.id} "<reason>"'} if status == PASSED else {'action': 'wait'}])
     no_agent_reason = args.no_agent_review
     if no_agent_reason is not None:
         if not author:
-            raise BoardError('--no-agent-review is only available on an author handover, not a reviewer pass')
+            raise refuse('status.handover', '--no-agent-review is only available on an author handover, not a reviewer pass')
         if cr_look(board, cr) != 'before':
-            raise BoardError('--no-agent-review is refused in a look-after project')
+            raise refuse('status.handover', '--no-agent-review is refused in a look-after project')
         refuse_long_comment(f'no agent review: {no_agent_reason}')
     refuse_long_comment(HANDOVER + args.evidence)
-    refusal = open_item_refusal(board, cr)
-    if refusal:
-        raise BoardError(refusal)
+    if refusal := open_item_refusal(board, cr):
+        raise refusal
     main = main_root()
     wt = cr_worktree(main, args.id)
     if not wt.is_dir():
-        raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}',
+        raise fault(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}',
                          next=[{'action': 'worktree', 'command': f'git worktree add {wt} {cr_branch(args.id)}'}])
     refuse_open(args.id, cr, 'handover')
     result = checked_sync(board, cr, main, wt, args, reuse=True)
     if result['code']:
-        raise BoardError(f"{args.id}: checks failed, not handed over:\n{result['output']}",
+        raise fault(f"{args.id}: checks failed, not handed over:\n{result['output']}",
                          next=[{'action': 'fix', 'text': 'fix the failing checks (output above), then hand over again'}])
     look = cr_look(board, cr)
     seen = meta(cr).get('reviewing_tip')
@@ -5375,9 +5399,7 @@ def handover(board: Board, args) -> None:
         else:
             shown = git(wt, 'log', '--stat', '--format=%h %s', f"{result['baseTip']}..{result['tip']}", check=False).stdout.decode('utf-8', 'replace')
             said = f"no tip is recorded as seen by you (the CR was taken over); the tip is {result['tip'][:12]}"
-        raise BoardError(f"{args.id}: {said}; nothing was recorded. Review the change, then pass again:\n{shown.rstrip() or '(nothing to show)'}")
-    if DEEP_REVIEW in m:  # the deep-review's hand-over ends the escalation (nixes-df7kf)
-        put_meta(cr, **{DEEP_REVIEW: None})
+        raise refuse('status.handover', f"{args.id}: {said}; nothing was recorded. Review the change, then pass again:\n{shown.rstrip() or '(nothing to show)'}")
     if author:
         if no_agent_reason is not None:
             pass_to_user(board, cr, 'handover --no-agent-review', no_agent_review_reason=no_agent_reason, reviewing_tip=None, hold=None, author=actor)
@@ -5399,7 +5421,8 @@ def handover(board: Board, args) -> None:
         print(f'next: waits on agent review by a fresh worker, not you (agents board claim {args.id}); {after}')
         return
     comment(args.id, f'board pass: {args.evidence}')
-    put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'], no_agent_review_reason=None)
+    put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'], no_agent_review_reason=None,
+             **({DEEP_REVIEW: None} if DEEP_REVIEW in m else {}))  # only the reviewer's pass ends a deep-review escalation (nixes-fy01y)
     base = cr_base(board, cr, main)[0]
     empty = no_own_commits(main, cr, result['tip'])  # nothing to merge: lands on its passed review, in either look, unseen (r10-q50)
     if (look == 'after' or empty) and not board.is_cr(base):
@@ -5440,18 +5463,18 @@ def request_review(board: Board, args) -> int:
     actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'request-review')
     if cr['status'] != PASSED:
-        raise BoardError(f"{args.id}: {cr['status']}; request-review works only at the user's Accept", next=[{'action': 'wait'}])
+        raise refuse('status.request-review', f"{args.id}: {cr['status']}; request-review works only at the user's Accept", next=[{'action': 'wait'}])
     if cr.get('assignee') and not holds_cr(cr, actor):
-        raise BoardError(f"{args.id}: held by {cr['assignee']}; request review once that session releases it", next=[{'action': 'wait'}])
+        raise refuse('status.request-review', f"{args.id}: held by {cr['assignee']}; request review once that session releases it", next=[{'action': 'wait'}])
     review = review_read(board, cr)
     if review:
         refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} records them, then request review')
     main = main_root()
     info = cr_info(board, cr)
     if not info['tip'] or not info['baseTip']:
-        raise BoardError(f'{args.id}: its branch or base is gone; cannot request review')
+        raise fault(f'{args.id}: its branch or base is gone; cannot request review')
     if why := table_refusal(board, cr, 'send to review'):
-        raise BoardError(why)
+        raise why
     said = f'board cr request-review: {args.reason}' if args.reason else 'board cr request-review'
     refuse_long_comment(said)
     shown = range_delta(main, cr, info['baseTip'], info['tip'])
@@ -5468,16 +5491,16 @@ def request_review(board: Board, args) -> int:
 def reserve_planner_return(board: Board, cr: dict, ruling_id: str, actor: str) -> None:
     """Reserve an unclaimed review before returning it for a ruling."""
     if cr['status'] != 'in_review' or cr.get('assignee'):
-        raise BoardError(f"{cr['id']}: --ruling requires an unclaimed change request in review")
+        raise refuse('status.return', f"{cr['id']}: --ruling requires an unclaimed change request in review")
     if why := table_refusal(board, cr, 'return --ruling'):  # status.who-planner: the row's Who, before any write
-        raise BoardError(why)
+        raise why
     ruling = board.by_id.get(ruling_id) or {}
     if ruling.get('issue_type') != 'decision' or ruling.get('status') != 'in_force' or ruling.get('assignee') != actor:
-        raise BoardError(f'{ruling_id}: --ruling requires an in-force ruling you hold')
+        raise refuse('status.return', f'{ruling_id}: --ruling requires an in-force ruling you hold')
     if refusal := foreign_claim(board, cr['id']):
-        raise BoardError(refusal)
+        raise refusal
     if not any(ruling_id in board.blockers.get(item['id'], ()) for item in board.cr_items(cr['id'])):
-        raise BoardError(f'{ruling_id}: it does not hold any open item of {cr["id"]}; make the affected items wait on it first (agents board wait <item> --on {ruling_id})')
+        raise refuse('status.return', f'{ruling_id}: it does not hold any open item of {cr["id"]}; make the affected items wait on it first (agents board wait <item> --on {ruling_id})')
     move(cr, 'claim', board=board, actor=actor)
 
 
@@ -5496,14 +5519,14 @@ def return_item(board: Board, args) -> None:
     if args.ruling:
         reserve_planner_return(board, cr, args.ruling, caller())
     elif cr['status'] not in ('in_review', PASSED):
-        raise BoardError(f"{args.id}: {cr['status']}; only a change request in review or waiting for its Accept is returned (unclaim frees work in hand)")
+        raise refuse('status.return', f"{args.id}: {cr['status']}; only a change request in review or waiting for its Accept is returned (unclaim frees work in hand)")
     elif cr['status'] == PASSED:
         if why := table_refusal(board, cr, 'return'):
-            raise BoardError(f'{why}; the lead returns it with the findings you gave')
+            raise combined([why], f'{why}; the lead returns it with the findings you gave')
         if cr.get('assignee') and not holds_cr(cr, actor):
-            raise BoardError(f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released", next=[{'action': 'wait'}])
+            raise refuse('status.return', f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released", next=[{'action': 'wait'}])
     elif not holds_cr(cr, actor):
-        raise BoardError(f"{args.id}: {cr['status']}, held by {cr.get('assignee') or 'nobody'}; claim it first",
+        raise refuse('status.return', f"{args.id}: {cr['status']}, held by {cr.get('assignee') or 'nobody'}; claim it first",
                          next=[{'action': 'wait'} if cr.get('assignee') else {'action': 'claim', 'command': f'agents board claim {args.id}'}])
     try:
         review = review_read(board, cr)
@@ -5526,7 +5549,7 @@ def return_item(board: Board, args) -> None:
         if args.ruling:
             released = move(cr, 'unclaim', board=board, check=False) if cr['status'] == 'in_review' else None
             if released is not None and released.returncode not in (0, 13):
-                raise BoardError(f'{error}; releasing the temporary return hold failed: {bd_message(released)}') from error
+                raise combined([error], f'{error}; releasing the temporary return hold failed: {bd_message(released)}') from error
         raise
     comment(args.id, f"board return: findings as items: {', '.join(made)}")
     print(f"returned {args.id} to the queue (worktree and branch kept); open items: {', '.join(made)}")
@@ -5536,20 +5559,20 @@ def land(board: Board, args) -> int:
     caller_actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'land')
     if not may_attend(board):
-        raise BoardError('only a lead or solo session, or a person, lands a change request (the Accept)')
+        raise refuse('status.land', 'only a lead or solo session, or a person, lands a change request (the Accept)')
     m = meta(cr)
     if cr['status'] != PASSED:
-        raise BoardError(f"{args.id}: {cr['status']}; only a change request waiting for its Accept lands")
+        raise refuse('status.land', f"{args.id}: {cr['status']}; only a change request waiting for its Accept lands")
     if cr.get('assignee') and not holds_cr(cr, derived_actor() or ''):
-        raise BoardError(f"{args.id}: held by {cr['assignee']}: land it once that session releases it", next=[{'action': 'wait'}])
+        raise refuse('status.land', f"{args.id}: held by {cr['assignee']}: land it once that session releases it", next=[{'action': 'wait'}])
     main = main_root()
     stacked, _ = cr_base(board, cr, main)
     if board.is_cr(stacked):
-        raise BoardError(f'{args.id}: stacked on {stacked}, which has not landed: agents board cr land {stacked} first',
+        raise refuse('status.land', f'{args.id}: stacked on {stacked}, which has not landed: agents board cr land {stacked} first',
                          next=[{'action': 'land', 'text': f'land {stacked} first (its own Accept), then {args.id}'}])
     if not args.tip or not args.base:
         now = cr_info(board, cr)
-        raise BoardError(f'{args.id}: --tip <sha> and --base <sha> are required: pass the pair shown at Accept',
+        raise bad_input(f'{args.id}: --tip <sha> and --base <sha> are required: pass the pair shown at Accept',
                          next=[{'action': 'ask-user', 'text': f"ask the user to Accept the current pair, then agents board cr land {args.id} "
                                                                f"--tip {now.get('tip') or '<tip>'} --base {now.get('baseTip') or '<base>'}"}])
     incoming_base = incoming_base_of(cr)
@@ -5579,9 +5602,9 @@ def prepare_land(board: Board, cr: dict, main: Path, tip: str, base: str) -> tup
     branch_tip, branch_base = info['tip'], info['baseTip']
     seen_tip, seen_base = rev(main, tip), rev(main, base)
     if branch_tip is None or branch_base is None:
-        raise BoardError(f'{cid}: no branch or base is available')
+        raise fault(f'{cid}: no branch or base is available')
     if seen_tip is None or seen_base is None:
-        raise BoardError(f'{cid}: --tip and --base must name reachable commits')
+        raise bad_input(f'{cid}: --tip and --base must name reachable commits')
     if seen_tip != branch_tip:
         raise pair_moved_refusal(cid, 'branch', seen_tip, branch_tip, branch_base)
     if seen_base != branch_base:
@@ -5591,14 +5614,14 @@ def prepare_land(board: Board, cr: dict, main: Path, tip: str, base: str) -> tup
     if review:
         refuse_unrecorded(cid, review, f'{edits_line(cid, review["opened"])} records them, then land')
     if refusal := open_item_refusal(board, cr):
-        raise BoardError(refusal)
+        raise refusal
     if review:
         end_review(board, cr)
     result = None
     if info['state'] != 'current':
         wt = cr_worktree(main, cid)
         if not wt.is_dir():
-            raise BoardError(f'{cid}: no worktree {wt}: git worktree add {wt} {cr_branch(cid)}',
+            raise fault(f'{cid}: no worktree {wt}: git worktree add {wt} {cr_branch(cid)}',
                              next=[{'action': 'worktree', 'command': f'git worktree add {wt} {cr_branch(cid)}'}])
         result = sync_branch(board, cr, main, wt)
         info = cr_info(board, cr)
@@ -5610,7 +5633,7 @@ def prepare_land(board: Board, cr: dict, main: Path, tip: str, base: str) -> tup
         # The no-agent route covers the series the user saw, not a conflict resolution made after it.
         if meta(cr).get('no_agent_review_reason') and branch_tip != seen_tip and not replays(
                 main, cr, result['oldBase'], seen_tip, branch_base, branch_tip):
-            raise BoardError(f'{cid}: the change differs from the series you saw. Review its delta and Accept the current pair.',
+            raise refuse('status.land', f'{cid}: the change differs from the series you saw. Review its delta and Accept the current pair.',
                              next=[{'action': 'ask-user', 'text': f'ask the user to review the delta and Accept the current change, '
                                                                    f'then agents board cr land {cid} --tip {branch_tip} --base {branch_base}'}])
     if result and result['code']:
@@ -5618,7 +5641,7 @@ def prepare_land(board: Board, cr: dict, main: Path, tip: str, base: str) -> tup
         if sent:
             print(f'{cid}: the series changed since its last review; sent to agent review')
         # land ran it on this pair, so a rerun cannot pass: the author fixes it (sent: its reviewer finds it and returns it)
-        raise BoardError(f"{cid}: not landed, its check failed after rebase:\n{result['output']}",
+        raise fault(f"{cid}: not landed, its check failed after rebase:\n{result['output']}",
                          next=[{'action': 'wait'} if sent else {'action': 'return', 'command': f'agents board return {cid} "<the failing check>"'}])
     return branch_tip, branch_base
 
@@ -5627,11 +5650,11 @@ def reject(board: Board, args) -> int:
     actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'reject')
     if why := table_refusal(board, cr, 'cr reject'):
-        raise BoardError(why)
+        raise why
     refuse_long_comment(f'board cr reject: {args.reason}')
     if open_items := board.cr_items(args.id):
         ids = ' '.join(item['id'] for item in open_items)
-        raise BoardError(f'{args.id}: items still open: {ids}; no open item stays under a closed change request: '
+        raise refuse('status.items-closed', f'{args.id}: items still open: {ids}; no open item stays under a closed change request: '
                          f'agents board close {ids} --outcome dropped --reason "<why>", or agents board move {ids} --to <change request>')
     move(cr, 'cr reject', board=board, reason=f"rejected: {args.reason}"[:300].ljust(20, '.'), force=True)
     comment(args.id, f'board cr reject: {actor}: {args.reason}')
@@ -5681,13 +5704,13 @@ def refresh(board: Board, args) -> int:
     actor = caller()
     cr = cr_arg(board, args.id, 'refresh')
     if cr.get('assignee') and not holds_cr(cr, actor):
-        raise BoardError(f"{args.id}: held by {cr['assignee']}; refresh waits until that session releases it", next=[{'action': 'wait'}])
+        raise refuse('status.refresh', f"{args.id}: held by {cr['assignee']}; refresh waits until that session releases it", next=[{'action': 'wait'}])
     if not (in_work(cr) or cr['status'] in ('in_review', PASSED)):
-        raise BoardError(f"{args.id}: {cr['status']}, no worktree in use to refresh")
+        raise refuse('status.refresh', f"{args.id}: {cr['status']}, no worktree in use to refresh")
     main = main_root()
     wt = cr_worktree(main, args.id)
     if not wt.is_dir():
-        raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}',
+        raise fault(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}',
                          next=[{'action': 'worktree', 'command': f'git worktree add {wt} {cr_branch(args.id)}'}])
     refuse_open(args.id, cr, 'a refresh')
     merging_user_edit = stopped_edit_commit(cr, wt) is not None
@@ -5732,10 +5755,10 @@ def review_edits_tree(main: Path, wt: Path, tip: str) -> str:
     """The tree object holding the worktree's files: tracked and new (not ignored) as they are on disk, staged or not. Built in a
     throwaway index, so the worktree's own index and files are never touched."""
     if not linked_worktree(wt):
-        raise BoardError(f'{wt} is not a git worktree')
+        raise fault(f'{wt} is not a git worktree')
     common = lambda root: Path(git_text(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()).resolve()
     if common(wt) != common(main):
-        raise BoardError(f'{wt} is a worktree of another repository')
+        raise fault(f'{wt} is a worktree of another repository')
     with tempfile.TemporaryDirectory() as scratch:
         env = {'GIT_INDEX_FILE': str(Path(scratch) / 'index')}
         git(wt, 'read-tree', tip, env=env)
@@ -5767,7 +5790,7 @@ def board_remote(main: Path, make: bool = False) -> bool:
     ours = bool(url) and (pushurl == NO_PUSH or Path(url).resolve() == main.resolve())  # the disabled push address is the board's mark: a moved checkout keeps it
     if url and not ours:
         if make:
-            raise BoardError(f'the remote {BOARD_REMOTE} exists already and is not the board\'s ({url}): rename it (git remote rename {BOARD_REMOTE} <name>), then open again')
+            raise fault(f'the remote {BOARD_REMOTE} exists already and is not the board\'s ({url}): rename it (git remote rename {BOARD_REMOTE} <name>), then open again')
         return False
     if not make:
         return ours
@@ -5810,37 +5833,37 @@ def review_open(board: Board, args) -> int:
     Records the tip it opens at, points the branch at the board's remote and prints the folder to open. Opening an item that is already
     open changes nothing it holds: its opened tip, edits and commits stay the user's."""
     if not may_attend(board):
-        raise BoardError('only a lead or solo session, or a person, opens the review')
+        raise refuse('meta.review-open', 'only a lead or solo session, or a person, opens the review')
     item = require_open(board, [args.id])[0]
     if not board.is_cr(item['id']):
-        raise BoardError(f"{args.id}: agents board review open works on a change request")
+        raise bad_input(f"{args.id}: agents board review open works on a change request")
     main = main_root()
     wt, branch, already = cr_worktree(main, args.id), cr_branch(args.id), opened_tip(item)
     found = review_range(board, item)
     if found is None:
-        raise BoardError(f'{args.id}: no range to show (a change request without its branch)')
+        raise fault(f'{args.id}: no range to show (a change request without its branch)')
     tip = already or found[0]
     if item['status'] != PASSED:
-        raise BoardError(f"{args.id}: {item['status']}: its worktree is the agent's (in work, review or returned); the review shows a change request waiting for its Accept")
+        raise refuse('meta.review-open', f"{args.id}: {item['status']}: its worktree is the agent's (in work, review or returned); the review shows a change request waiting for its Accept")
     if item.get('assignee') and not holder_decides(board, item['assignee']):
-        raise BoardError(f"{args.id}: held by {item['assignee']}, an agent session at work in its worktree (a refresh): open it once that session releases it")
+        raise refuse('meta.review-open', f"{args.id}: held by {item['assignee']}, an agent session at work in its worktree (a refresh): open it once that session releases it")
     if found[1] is None or rev(main, f'refs/heads/{branch}') is None:
-        raise BoardError(f'{args.id}: its branch or base is gone')
+        raise fault(f'{args.id}: its branch or base is gone')
     base = cr_base(board, item, main)[0]
     upstream = cr_branch(base) if board.is_cr(base) else base
     if not wt.exists() and not already:
-        raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {branch}')
+        raise fault(f'{args.id}: no worktree {wt}: git worktree add {wt} {branch}')
     if wt.exists() and not linked_worktree(wt):
-        raise BoardError(f'{args.id}: {wt} exists but is no git worktree of its own (a plain folder would make git act on the main checkout): remove it or git worktree add it, then open again')
+        raise fault(f'{args.id}: {wt} exists but is no git worktree of its own (a plain folder would make git act on the main checkout): remove it or git worktree add it, then open again')
     if wt.exists():
         state = in_progress_state(wt)
         if state:
-            raise BoardError(f'{args.id}: a {state} is in progress in {wt}: its owner finishes or aborts it first')
+            raise fault(f'{args.id}: a {state} is in progress in {wt}: its owner finishes or aborts it first')
         if git_text(wt, 'rev-parse', '--abbrev-ref', 'HEAD').strip() != branch:
-            raise BoardError(f'{args.id}: {wt} is not on {branch}: check it out (or fix it), then open again')
+            raise fault(f'{args.id}: {wt} is not on {branch}: check it out (or fix it), then open again')
         problem = None if already else tree_problem(wt)  # an open review's uncommitted changes are the user's edits
         if problem:
-            raise BoardError(f'{args.id}: {problem}')
+            raise fault(f'{args.id}: {problem}')
     board_remote(main, make=True)
     if not wt.exists():  # a worktree that went missing from an open review
         exclude_worktrees(main)
@@ -5862,7 +5885,7 @@ def user_identity(main: Path) -> dict[str, str]:
     """Author environment of the user's commit: git's user.name and user.email of the repository."""
     who = {key: git(main, 'config', key, check=False).stdout.decode().strip() for key in ('user.name', 'user.email')}
     if not all(who.values()):
-        raise BoardError('git user.name and user.email are not set: the review edits are committed as yours')
+        raise fault('git user.name and user.email are not set: the review edits are committed as yours')
     return {'GIT_AUTHOR_NAME': who['user.name'], 'GIT_AUTHOR_EMAIL': who['user.email']}
 
 
@@ -5879,7 +5902,7 @@ def edits_target(board: Board, args) -> dict:
     """The change request waiting for its Accept whose review edits are taken."""
     issue = require_open(board, [args.id])[0]
     if not board.is_cr(args.id) or issue['status'] != PASSED:
-        raise BoardError(f"{args.id}: {issue['status']}; agents board cr edits works on a change request waiting for its Accept")
+        raise refuse('meta.edits', f"{args.id}: {issue['status']}; agents board cr edits works on a change request waiting for its Accept")
     return issue
 
 
@@ -5916,7 +5939,7 @@ def checked_sync(board: Board, cr: dict, main: Path, wt: Path, args, reuse: bool
         code, output = run_shell_full(wt, args.gate)
         passed = code == 0
     if rev(wt, 'HEAD') != result['tip'] or tree_problem(wt):
-        raise BoardError(f"{cr['id']}: the gate changed the worktree ({tree_problem(wt) or 'HEAD moved'}); nothing was recorded")
+        raise fault(f"{cr['id']}: the gate changed the worktree ({tree_problem(wt) or 'HEAD moved'}); nothing was recorded")
     store_gate(cr, result['tip'], result['baseTip'], args.gate, args.no_gate, passed, output)
     board._cr.pop(cr['id'], None)
     return {**result, 'code': 0 if passed else code, 'output': '' if passed else f'{args.gate}:\n{tail(output)}'}
@@ -5937,24 +5960,24 @@ def cr_edits(board: Board, args) -> int:
     no edits --commit only ends the review (the Accept or Return of an unedited one). `--tip` is the opened tip. `--merged` records a
     merge the user confirmed."""
     if (args.gate or args.no_gate or args.checks) and not args.commit:
-        raise BoardError('--gate, --no-gate and --checks go with --commit')
+        raise bad_input('--gate, --no-gate and --checks go with --commit')
     main = main_root()
     if args.merged:
         return record_merged(board, args, main)
     if not args.tip:
-        raise BoardError('--tip <sha> is required: the tip the review was opened at')
+        raise bad_input('--tip <sha> is required: the tip the review was opened at')
     issue = edits_target(board, args)
     wt, expect = cr_worktree(main, args.id), rev(main, args.tip)
     if expect is None:
-        raise BoardError(f'{args.tip} is not a commit here')
+        raise bad_input(f'{args.tip} is not a commit here')
     review = review_read(board, issue)
     if review is None:
-        raise BoardError(f'{args.id}: is not open for your review: agents board review open {args.id} first')
+        raise refuse('meta.edits', f'{args.id}: is not open for your review: agents board review open {args.id} first')
     opened = review['opened']
     if opened != expect:
-        raise BoardError(f'{args.id}: your review was opened at {opened[:12]}, not {expect[:12]}')
+        raise refuse('meta.edits', f'{args.id}: your review was opened at {opened[:12]}, not {expect[:12]}')
     if review['edited'] is None:
-        raise BoardError(f"{args.id}: your review cannot be read: {review['why']}")
+        raise fault(f"{args.id}: your review cannot be read: {review['why']}")
     branch = cr_branch(args.id)
     if not args.commit:
         if not review['edited']:
@@ -5966,15 +5989,15 @@ def cr_edits(board: Board, args) -> int:
         print(f'edits in {wt} against {opened[:12]} ({len(review["commits"])} commits, {len(names)} files):' + ''.join(f'\n  {row}' for row in names) + f'\n\n{shown}', end='')
         return 0
     if not may_attend(board):
-        raise BoardError('only a lead or solo session, or a person, commits the review edits')
+        raise refuse('meta.edits', 'only a lead or solo session, or a person, commits the review edits')
     if issue.get('assignee') and not holds_cr(issue, derived_actor() or ''):
-        raise BoardError(f"{args.id}: held by {issue['assignee']}: commit the edits once that session releases it")
+        raise refuse('meta.edits', f"{args.id}: held by {issue['assignee']}: commit the edits once that session releases it")
     if not review['edited']:
         end_review(board, issue)
         print(f'ended your review of {args.id}: no edits; {branch} stays at {opened[:12]}' + ('; no check stored for it' if args.gate or args.no_gate or args.checks else ''))
         return 0
     if review['dirty'] and not args.message:
-        raise BoardError('--commit needs -m <message> when the review holds uncommitted changes')
+        raise bad_input('--commit needs -m <message> when the review holds uncommitted changes')
     commit = edits_commit(main, review['tip'], review_edits_tree(main, wt, review['tip']), args.message) if review['dirty'] else None
     cr, new_tip = issue, commit or review['tip']
     before = edit_entries(cr)
@@ -5982,13 +6005,13 @@ def cr_edits(board: Board, args) -> int:
     record_edits(cr, recorded)  # first: a commit on the branch is the user's only while recorded, so no crash leaves it unrecorded
     if commit and git(main, 'update-ref', f'refs/heads/{branch}', commit, review['tip'], check=False).returncode != 0:
         put_meta(cr, review_edits=json.dumps(before) if before else None)
-        raise BoardError(f'{args.id}: {branch} moved meanwhile; nothing committed')
+        raise fault(f'{args.id}: {branch} moved meanwhile; nothing committed')
     try:
         if commit:
             git(wt, 'reset', '-q', commit)  # the branch already is there: the index follows, the files are its tree
         end_review(board, cr)  # before anything that can stop (a conflicting rebase): refresh must be allowed once the edits are the user's
     except BoardError as error:
-        raise BoardError(f'{args.id}: the edits are recorded ({len(recorded)} commits, tip {new_tip[:12]} on {branch}), but {error}; run this command again') from None
+        raise fault(f'{args.id}: the edits are recorded ({len(recorded)} commits, tip {new_tip[:12]} on {branch}), but {error}; run this command again') from None
     print(f'recorded your {len(recorded)} commits on {branch} as yours' + (f', the last one made from your uncommitted changes (author {git(main, "log", "-1", "--format=%an", commit).stdout.decode().strip()})' if commit else '')
           + '; your review ended')
     comment(args.id, f'board cr edits: the review edits of {wt}@{opened[:12]} recorded as yours ({", ".join(c[:12] for c in recorded)}).')
@@ -6021,17 +6044,17 @@ def record_merged(board: Board, args, main: Path) -> int:
     this it is an agent change. The commit must be on the CR's branch past its fork point and carry the author and time of a recorded
     edit commit, which a rebase and a conflict merge keep."""
     if args.tip or args.commit or args.gate or args.no_gate or args.checks or args.message:
-        raise BoardError('--merged goes alone: agents board cr edits <cr> --merged <commit>')
+        raise bad_input('--merged goes alone: agents board cr edits <cr> --merged <commit>')
     if not may_attend(board):
-        raise BoardError('only a lead or solo session, or a person, records the user\'s confirmed merge')
+        raise refuse('meta.edits', 'only a lead or solo session, or a person, records the user\'s confirmed merge')
     cr = cr_arg(board, args.id, 'cr edits')
     if cr['status'] != PASSED:
-        raise BoardError(f"{args.id}: {cr['status']}; --merged works on a change request waiting for its Accept")
+        raise refuse('meta.edits', f"{args.id}: {cr['status']}; --merged works on a change request waiting for its Accept")
     if cr.get('assignee') and not holds_cr(cr, derived_actor() or ''):
-        raise BoardError(f"{args.id}: held by {cr['assignee']}: record the merge once that session releases it")
+        raise refuse('meta.edits', f"{args.id}: held by {cr['assignee']}: record the merge once that session releases it")
     commit, tip, fork = rev(main, args.merged), rev(main, f'refs/heads/{cr_branch(args.id)}'), meta(cr).get('base_sha')
     if commit is None or tip is None or not fork or commit not in git_text(main, 'rev-list', f'{fork}..{tip}').split():
-        raise BoardError(f'{args.id}: {args.merged} is not a commit of {cr_branch(args.id)} past its fork point (a stopped rebase: resolve it and agents board cr refresh {args.id} first)')
+        raise bad_input(f'{args.id}: {args.merged} is not a commit of {cr_branch(args.id)} past its fork point (a stopped rebase: resolve it and agents board cr refresh {args.id} first)')
     entries = [one['commit'] for one in edit_entries(cr)]
     if commit in entries or any(is_replay(main, one, commit) for one in entries):
         print(f'{args.id}: {commit[:12]} already counts as the user\'s edit; nothing to record')
@@ -6039,7 +6062,7 @@ def record_merged(board: Board, args, main: Path) -> int:
     stamp_of = author_stamp(main, commit)
     at = next((n for n, one in enumerate(entries) if rev(main, one) and author_stamp(main, one) == stamp_of), None)
     if at is None:
-        raise BoardError(f'{args.id}: {commit[:12]} is not the merge of a recorded edit commit (none has its author and time): only a conflict on the user\'s edit commit is recorded this way')
+        raise refuse('meta.edits', f'{args.id}: {commit[:12]} is not the merge of a recorded edit commit (none has its author and time): only a conflict on the user\'s edit commit is recorded this way')
     put_meta(cr, review_edits=json.dumps([{'commit': commit if n == at else one} for n, one in enumerate(entries)]))  # in place of the pre-rebase commit, which no branch holds now
     comment(args.id, f'board cr edits: the merge {commit[:12]} of a conflict on the user\'s edit {entries[at][:12]}, confirmed by the user, recorded as their edit in its place.')
     board._cr.pop(args.id, None)
@@ -6108,7 +6131,7 @@ def comment_command(args) -> int:
     if args.file is not None:
         text = read_text_arg(args.file)
     if not text.strip():
-        raise BoardError('the comment is empty')
+        raise bad_input('the comment is empty')
     if not args.packet:
         refuse_long_comment(text)
     failed = False
@@ -6148,13 +6171,13 @@ def close_command(args) -> int:
     ids = [board_id(item_id) for item_id in dict.fromkeys(args.ids)]
     reason = args.reason.strip()
     if len(reason) < CLOSE_REASON_MIN:
-        raise BoardError(f'--reason is {len(reason)} characters: bd wants at least {CLOSE_REASON_MIN}; say why it closes')
+        raise bad_input(f'--reason is {len(reason)} characters: bd wants at least {CLOSE_REASON_MIN}; say why it closes')
     refusal = cr_close_refusal(ids)
     if refusal:
-        raise BoardError(refusal)
+        raise bad_input(refusal)
     found = {issue['id']: issue for issue in bd_show(ids, comments=False)}
     if missing := [item_id for item_id in ids if item_id not in found]:
-        raise BoardError(f"unknown {', '.join(missing)}")
+        raise bad_input(f"unknown {', '.join(missing)}")
     board = Board.load()  # an item closes by its change request's holder (record_write_refusal)
     together = frozenset(ids)
     # All or none: every id's whole close is checked before the first write, so no refusal leaves an earlier id closed (a dropped target under its
@@ -6164,16 +6187,16 @@ def close_command(args) -> int:
         try:
             move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board, together=together, write=False)
         except BoardError as error:
-            refusals.append(str(error))
+            refusals.append(error)
     if refusals:
-        raise BoardError('\n'.join(refusals) + ('\nnothing closed' if len(ids) > 1 else ''))
+        raise combined(refusals, '\n'.join(map(str, refusals)) + ('\nnothing closed' if len(ids) > 1 else ''))
     closed = []
     for item_id in close_order(board, ids):
         try:
             move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board, together=together)
         except BoardError as error:
             if closed:
-                raise BoardError(f'{error}\n' + partial_close_report(board, closed, found)) from error
+                raise combined([error], f'{error}\n' + partial_close_report(board, closed, found)) from error
             raise
         closed.append(item_id)
         print(f'{item_id}: closed')
@@ -6242,7 +6265,7 @@ def passthrough(argv: list[str]) -> int:
               'Nothing ran; add --yes to run it.', file=sys.stderr)
         return 2
     if argv[:1] == ['dolt'] and argv[1:2] in (['start'], ['restart']):
-        raise BoardError('board starts the server before every bd call; rerun the failing command with elevated sandbox permissions')
+        raise fault('board starts the server before every bd call; rerun the failing command with elevated sandbox permissions')
     at = 0
     while at < len(argv) and argv[at].startswith('-'):
         at += 2 if argv[at] in GLOBAL_VALUES else 1
@@ -6317,7 +6340,7 @@ def label_shape_refusal(labels: list[str]) -> str | None:
 
 
 def parent_move_refusal(board: Board, ids: list[str], target: str | None, *,
-                        planned_crs: dict[str, str] | None = None, new: dict[str, str] | None = None) -> str | None:
+                        planned_crs: dict[str, str] | None = None, new: dict[str, str] | None = None) -> BoardError | None:
     """Why this reparenting is refused. A change request keeps its place; a work item of one (it is that request's membership, and its
     hold, worktree and pass commit belong to the request) leaves it only while open and unheld; on a shared board the parent decides the
     queue of an item with none of its own, so only lead and solo sessions move it."""
@@ -6328,26 +6351,27 @@ def parent_move_refusal(board: Board, ids: list[str], target: str | None, *,
         if issue.get('issue_type') == CR_TYPE:
             if target is not None and board.by_id.get(target, {}).get('issue_type') == 'milestone':
                 continue  # a change request is part of a milestone
-            return f'{item_id} is a change request: it keeps its parent (a stacked request waits on its base: agents board cr refresh) and moves only into a milestone'
+            return refuse('parent-child.cr-stays', f'{item_id} is a change request: it keeps its parent (a stacked request waits on its base: agents board cr refresh) '
+                          'and moves only into a milestone')
         for parent in board.parents.get(item_id, []):
             if parent != target and board.by_id.get(parent, {}).get('issue_type') == CR_TYPE and (issue['status'] != 'open' or issue.get('assignee')):
-                return (f"{item_id} is {issue['status']}{' and held' if issue.get('assignee') else ''} in change request {parent}: its hold, worktree and "
-                        'pass commit belong to it; finish or hand it back before moving it out')
+                return refuse('parent-child.leave', f"{item_id} is {issue['status']}{' and held' if issue.get('assignee') else ''} in change request {parent}: its hold, "
+                              'worktree and pass commit belong to it; finish or hand it back before moving it out')
     if shared is not None and acting() and not may_attend():
         for item_id in ids:
             if item_id in board.by_id and not queue_labels(board.routing(item_id)[0]) and board.queues(item_id) != (board.queues(target) if target else []):
-                return ("only lead and solo sessions move an item's parent, which moves it to the parent's queue; file a find for another person with "
-                        'agents board create --for <person>, and ask your lead to route the rest (agents board route)')
+                return refuse('parent-child.queue', "only lead and solo sessions move an item's parent, which moves it to the parent's queue; file a find for another "
+                              'person with agents board create --for <person>, and ask your lead to route the rest (agents board route)')
     return None
 
 
-def plan_queue_refusal(plan: dict) -> str | None:
+def plan_queue_refusal(plan: dict) -> BoardError | None:
     """A plan that puts an item in someone else's queue is a move: only lead and solo sessions make it."""
     mine = QUEUE_PREFIX + (person() or '')
     named = queue_labels([label for node in plan['nodes'] for label in node.get('labels') or []])
     if any(label != mine for label in named) and not may_attend():
-        return ("only lead and solo sessions change an item into someone else's queue; file a find for another person with agents board create --for "
-                '<person>, and ask your lead to route the rest (agents board route)')
+        return refuse('queue.attended', "only lead and solo sessions change an item into someone else's queue; file a find for another person with "
+                      'agents board create --for <person>, and ask your lead to route the rest (agents board route)')
     return None
 
 
@@ -6359,13 +6383,13 @@ def parse_holds(value: str | None) -> list[str]:
     """The ids a new question or ruling holds up; [] for `none`. A decision is never created without saying (board-core.md Questions
     and rulings): the block edge rule lived in text alone and sessions skipped it."""
     if value is None:
-        raise BoardError(f'a question or ruling names what it holds up when it is created: {HOLDS_USAGE}')
+        raise bad_input(f'a question or ruling names what it holds up when it is created: {HOLDS_USAGE}')
     parts = [part.strip() for part in value.split(',') if part.strip()]
     if not parts:
-        raise BoardError(f'--holds is empty: {HOLDS_USAGE}')
+        raise bad_input(f'--holds is empty: {HOLDS_USAGE}')
     if NO_HOLDS in parts:
         if parts != [NO_HOLDS]:
-            raise BoardError(f'--holds none stands alone, not beside ids ({value})')
+            raise bad_input(f'--holds none stands alone, not beside ids ({value})')
         return []
     return parts
 
@@ -6411,7 +6435,7 @@ def blocking(kind: str) -> bool:
 def refuse_old_link(kind: str | None, where: str = 'a link') -> None:
     """Refuses an input word of the earlier relations, naming the form that replaces it."""
     if kind in OLD_LINK_WORDS:
-        raise BoardError(f'{where}: {kind} is not a link word; use {OLD_LINK_WORDS[kind]}')
+        raise refuse('relates-to.types' if kind in ('related', 'discovered-from') else 'blocks.writers', f'{where}: {kind} is not a link word; use {OLD_LINK_WORDS[kind]}')
 
 
 def wait_sentence(waiter: str, target: str, why: str | None) -> str:
@@ -6428,9 +6452,9 @@ def plan_links(plan: dict) -> tuple[list[tuple[str, str, str]], dict[str, str]]:
         kind = edge.get('type') or WAIT_LINK
         ends = [edge.get('from_key') or edge.get('from_id'), edge.get('to_key') or edge.get('to_id')]
         if edge.get('from_id') in new or edge.get('to_id') in new:
-            raise BoardError(f"{edge.get('from_id') if edge.get('from_id') in new else edge.get('to_id')} is a plan key and an existing id: name it from_key/to_key")
+            raise bad_input(f"{edge.get('from_id') if edge.get('from_id') in new else edge.get('to_id')} is a plan key and an existing id: name it from_key/to_key")
         if not any(end in new for end in ends):
-            raise BoardError(f'{ends[0]} -> {ends[1]} ({kind}): a plan edge needs a new item at one end; link existing items with agents board link or agents board wait')
+            raise bad_input(f'{ends[0]} -> {ends[1]} ({kind}): a plan edge needs a new item at one end; link existing items with agents board link or agents board wait')
         links.append((ends[0], ends[1], kind))
     for node in plan['nodes']:
         for dep in node.get('deps') or []:
@@ -6511,11 +6535,12 @@ def filing_refusal(child: str, refusal: str, cr_id: str) -> str:
             f'with its items in one agents board create --graph (nodes with --found-in {cr_id}), or as a comment on {cr_id}')
 
 
-def supersede_who_refusal(board: Board, old: str, actor: str | None) -> str | None:
+def supersede_who_refusal(board: Board, old: str, actor: str | None) -> BoardError | None:
     """supersedes.who: writing or removing a supersedes edge, partial or full, takes the `supersede` row's Who (a deciding session or the user)."""
     row = next(m for m in MOVES if m.command == 'supersede')
     issue = board.by_id.get(old) or {'id': old}
-    return authority_refusal(issue, row, 'ruling supersede', actor, board)
+    why = authority_refusal(issue, row, 'ruling supersede', actor, board)
+    return refuse('supersedes.who', why) if why else None
 
 
 def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str, str] | None = None,
@@ -6553,51 +6578,53 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
 
     for source, target, kind in removes:
         if kind in RULING_LINKS and verb not in ('ruling', 'record'):
-            raise BoardError(f'{source} -> {target} is a {kind} link of rulings: agents board ruling supersede|revise own it')
+            raise refuse('supersedes.ruling-only' if kind == 'supersedes' else 'tracks.ruling-only', f'{source} -> {target} is a {kind} link of rulings: agents board ruling supersede|revise own it')
         if kind == 'supersedes' and board and (refusal := supersede_who_refusal(board, source, who)):
-            raise BoardError(refusal)
+            raise refusal
         if kind == 'parent-child':
-            raise BoardError(parent_refusal(source))
+            raise refuse('parent-child.only-move', parent_refusal(source))
         if blocking(kind) and board and source in board.by_id and (refusal := record_write_refusal(board, board.by_id[source], 'unlink', who)):
-            raise BoardError(refusal)
+            raise refuse('blocks.hold' if group_of(board, board.by_id[source]) == ITEM_GROUP else 'held-record.wait', refusal)
 
     # The parent rules (parent-child.*), one pass over every parent edge, new child or existing.
     for child, count in ((child, sum(1 for c, _ in parent_edges if c == child)) for child in dict.fromkeys(c for c, _ in parent_edges)):
         if count > 1:
-            raise BoardError(f"{child}: a record has one parent, given {', '.join(p for c, p in parent_edges if c == child)}")  # one-parent
+            raise refuse('parent-child.one-parent', f"{child}: a record has one parent, given {', '.join(p for c, p in parent_edges if c == child)}")  # one-parent
     for key, type_ in new.items():
         if type_ == WORK_TYPE and key not in loose and key not in planned_crs and not any(c == key for c, _ in parent_edges):
-            raise BoardError(loose_work_refusal(key))  # work-needs-cr
+            raise refuse('parent-child.work-needs-cr', loose_work_refusal(key))  # work-needs-cr
     for child, parent in parent_edges:
         if child not in new and (verb != 'move' or not board or child not in board.by_id):
-            raise BoardError(parent_refusal(child))  # only-move
+            raise refuse('parent-child.only-move', parent_refusal(child))  # only-move
         if parent not in new and (not board or parent not in board.by_id):
-            raise BoardError(f'unknown parent {parent}')
+            raise bad_input(f'unknown parent {parent}')
         child_kind, parent_kind = kind_of(child), kind_of(parent)
-        if child not in new and (refusal := parent_move_refusal(board, [child], parent) or record_write_refusal(board, board.by_id[child], 'move', who)):
-            raise BoardError(refusal)  # cr-stays, leave, queue, held-record.write
+        if child not in new and (refusal := parent_move_refusal(board, [child], parent)):
+            raise refusal  # cr-stays, leave, queue
+        if child not in new and (refusal := record_write_refusal(board, board.by_id[child], 'move', who)):  # an item leaves under its CR's hold
+            raise refuse('parent-child.leave' if group_of(board, board.by_id[child]) == ITEM_GROUP else 'held-record.write', refusal)
         if child in loose:
-            raise BoardError(f'{child}: work that commits nothing stands outside any change request: drop --parent, or drop --no-commit to file it in one')
+            raise refuse('parent-child.work-needs-cr', f'{child}: work that commits nothing stands outside any change request: drop --parent, or drop --no-commit to file it in one')
         if (child_kind, parent_kind) not in ((WORK_TYPE, CR_TYPE), (CR_TYPE, 'milestone')):  # kind-fit (nixes-s378b, nixes-7oqkc)
             if child_kind == WORK_TYPE and child in new:
-                raise BoardError(loose_work_refusal(child))  # work-needs-cr
+                raise refuse('parent-child.work-needs-cr', loose_work_refusal(child))  # work-needs-cr
             if child_kind == WORK_TYPE:
-                raise BoardError(f'{parent} is not an open change request: {child} is part of one; work that commits nothing is a task, not an item')
+                raise refuse('parent-child.kind-fit', f'{parent} is not an open change request: {child} is part of one; work that commits nothing is a task, not an item')
             if child_kind == CR_TYPE:
-                raise BoardError(f'{parent} is not an open milestone: change request {child} is part of a milestone or stands alone')
-            raise BoardError(f"{child}: a {(child_kind or 'record').replace('-', ' ')} has no parent {parent} ({(parent_kind or 'unknown').replace('-', ' ')}): only a task is "
+                raise refuse('parent-child.kind-fit', f'{parent} is not an open milestone: change request {child} is part of a milestone or stands alone')
+            raise refuse('parent-child.kind-fit', f"{child}: a {(child_kind or 'record').replace('-', ' ')} has no parent {parent} ({(parent_kind or 'unknown').replace('-', ' ')}): only a task is "
                              'part of a change request and only a change request part of a milestone; a decision, gate or milestone stands alone')
         if parent not in new and not board.is_open(parent):  # open-parent
-            raise BoardError(f"{child}: {parent} is not an open {parent_kind.replace('-', ' ')}: it is closed (landed or dropped), so a part of it would be "
+            raise refuse('parent-child.open-parent', f"{child}: {parent} is not an open {parent_kind.replace('-', ' ')}: it is closed (landed or dropped), so a part of it would be "
                              f"reached by no queue; file it under an open {parent_kind.replace('-', ' ')}")
         if child not in new:
             if board.by_id[parent].get('status') == 'deferred' and (waiting := [w for w, _ in live_waits(board, child) if board.cr_of(w) != parent]):
-                raise BoardError(f"{child}: {', '.join(dict.fromkeys(waiting))} wait on it, and {parent} is deferred: it would hang them (blocks.target); "
+                raise refuse('blocks.target', f"{child}: {', '.join(dict.fromkeys(waiting))} wait on it, and {parent} is deferred: it would hang them (blocks.target); "
                                  f'{deferred_fix(board, child, waiting)}')
         if parent_kind == CR_TYPE and parent not in new:  # item-create: entering a change request is a write to its items (nixes-0an9j)
             cr = board.by_id[parent]
             if refusal := authority_refusal(cr, Move(verb, ITEM_GROUP, (cr['status'],), '=', '*', '=', ITEM_CREATE), verb, who, board):
-                raise BoardError(filing_refusal(child, refusal, parent))
+                raise refuse('parent-child.item-create', filing_refusal(child, refusal, parent))
 
     waits: Waits = {key: ([], []) for key in new}
     ops = []
@@ -6607,48 +6634,49 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
         cycle_edges += [(child, b) for child in moved for b in board.open_blockers(child)] + \
                        [(w, child) for child in moved for w in board.dependents.get(child, []) if board.is_open(w)]
     if chain := wait_cycle(board, cycle_edges, cr_of if new else None, moved):  # blocks.cycle, before anything is written
-        raise BoardError(f"these waits would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
+        raise refuse('blocks.cycle', f"these waits would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
     for waiting, other, kind in links + [(one, key, WAIT_LINK) for one, key in held_up]:
         if kind in RULING_LINKS and verb not in ('ruling', 'record'):
-            raise BoardError(f'{kind} links belong to rulings: agents board ruling supersede <old> --with <new>, agents board ruling revise <old> ...')
+            raise refuse('supersedes.ruling-only' if kind == 'supersedes' else 'tracks.ruling-only',
+                         f'{kind} links belong to rulings: agents board ruling supersede <old> --with <new>, agents board ruling revise <old> ...')
         if kind == 'supersedes' and board and (refusal := supersede_who_refusal(board, waiting, who)):
-            raise BoardError(refusal)
+            raise refusal
         if kind == 'parent-child':
             if verb == 'link':
-                raise BoardError(parent_refusal(waiting))
+                raise refuse('parent-child.only-move', parent_refusal(waiting))
         elif not blocking(kind) and kind not in PASS_LINKS:
-            raise BoardError(f"{waiting} -> {other}: {kind} is not a link the board writes (agents board link writes {', '.join(LINK_VERB_TYPES)}; "
+            raise refuse('relates-to.types', f"{waiting} -> {other}: {kind} is not a link the board writes (agents board link writes {', '.join(LINK_VERB_TYPES)}; "
                              'rulings write supersedes and tracks; a wait is agents board wait; a parent is agents board move)')
         elif blocking(kind):
             if verb == 'link':
-                raise BoardError(f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
+                raise refuse('blocks.writers', f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
             if refusal := wait_target_refusal(record_of(waiting) or None, other, record_of(other), board):  # blocks.target, .external, .waiter
-                raise BoardError(refusal)
+                raise refusal
             if waiting not in new and board and waiting in board.by_id and (refusal := record_write_refusal(board, board.by_id[waiting], 'wait', who)):
-                raise BoardError(refusal)  # blocks.hold, held-record.wait
+                raise refuse('blocks.hold' if group_of(board, board.by_id[waiting]) == ITEM_GROUP else 'held-record.wait', refusal)
             if waiting in new and other not in new and (waiting, other) not in fors and not reason_optional(record_of(waiting), record_of(other)):
-                raise BoardError(f'{waiting} would wait on {other} without saying for what: a wait on work needs a for (a plan node: waits_on '
+                raise refuse('blocks.for', f'{waiting} would wait on {other} without saying for what: a wait on work needs a for (a plan node: waits_on '
                                  f'[{{"on": "{other}", "for": "<the input it uses>"}}]; an existing item: agents board wait {waiting} --on {other} --for "<input>")')
             if other in new:
                 if waiting in new:
                     if new[other] == 'decision':  # between new work items bd writes the edge itself
                         waits[other][1].append(waiting)
                     elif (waiting, other) not in fors and not reason_optional(record_of(waiting), record_of(other)):
-                        raise BoardError(f'{waiting} would wait on the new {new[other]} {other} without saying for what: give the node waits_on '
+                        raise refuse('blocks.for', f'{waiting} would wait on the new {new[other]} {other} without saying for what: give the node waits_on '
                                          f'[{{"on": "{other}", "for": "<the input it uses>"}}]')
                 elif board is None or not board.is_open(waiting):
-                    raise BoardError(f'unknown or closed: {waiting}')
+                    raise bad_input(f'unknown or closed: {waiting}')
                 elif new[other] == 'decision' or reason_optional(board.by_id[waiting], {'issue_type': new[other]}):
                     waits[other][0].append(waiting)
                 else:  # blocks.for: an existing record made to wait on a new work item
-                    raise BoardError(f'{waiting} would wait on the new {new[other]} {other}, and a wait on a work item needs a reason: create the item without the '
+                    raise refuse('blocks.for', f'{waiting} would wait on the new {new[other]} {other}, and a wait on a work item needs a reason: create the item without the '
                                      f'link, then agents board wait {waiting} --on <new id> --for "<the input it uses>"')
         if new:
             continue  # bd writes a plan's links with the items
         if verb == 'wait' and board and (clash := [edge for a, _, edge in board.between(waiting, other) if edge != 'relates-to' and not (blocking(edge) and a == waiting)]):
-            raise BoardError(f"{waiting}: already linked to {other} by {', '.join(clash)}; bd keeps one edge per pair")  # a relates-to link gives way to the wait
+            raise refuse('blocks.pair', f"{waiting}: already linked to {other} by {', '.join(clash)}; bd keeps one edge per pair")  # a relates-to link gives way to the wait
         if verb in PAIR_VERBS and board and (clash := [edge for _, _, edge in board.between(waiting, other) if edge != kind and edge != 'parent-child']):
-            raise BoardError(f"{waiting} and {other} are linked already ({', '.join(clash)}); bd keeps one link per pair: agents board unlink first")
+            raise refuse('relates-to.pair', f"{waiting} and {other} are linked already ({', '.join(clash)}); bd keeps one link per pair: agents board unlink first")
         if board is None or not any(source == waiting and target == other and (edge == kind or blocking(edge) and blocking(kind))
                                     for source, target, edge in board.between(waiting, other)):
             ops.append((waiting, other, kind))
@@ -6681,10 +6709,10 @@ def require_holds_declared(waits: Waits, new: dict[str, str], value: str | None)
         if kind != 'decision':
             continue
         if value is None and not (ids or keys):
-            raise BoardError(f'the decision {key} names what it holds up: --holds <id>[,<id>], or a node of the plan that waits on it (waits_on), '
+            raise bad_input(f'the decision {key} names what it holds up: --holds <id>[,<id>], or a node of the plan that waits on it (waits_on), '
                              f'or --holds none ({HOLDS_USAGE})')
         if value is not None and not parse_holds(value) and (ids or keys):
-            raise BoardError(f'--holds none stands alone, not beside the links that make {(ids + keys)[0]} wait on decision {key}')
+            raise bad_input(f'--holds none stands alone, not beside the links that make {(ids + keys)[0]} wait on decision {key}')
 
 
 def apply_waits(made: dict[str | None, str], waits: Waits, types: dict[str, str]) -> int:
@@ -6723,40 +6751,40 @@ def validate_plan(plan: object, name: str = 'the plan', fields: set[str] = PLAN_
     deps and edges objects). bd ignores what it does not know, so a typo would lose a field silently."""
     nodes = plan.get('nodes') if isinstance(plan, dict) else None
     if not isinstance(nodes, list) or not nodes:
-        raise BoardError(f'{name}: a plan is a JSON object with a non-empty "nodes" list (and optional "edges")')
+        raise bad_input(f'{name}: a plan is a JSON object with a non-empty "nodes" list (and optional "edges")')
     if set(plan) - {'nodes', 'edges'}:
-        raise BoardError(f"{name}: unknown plan key {', '.join(sorted(set(plan) - {'nodes', 'edges'}))}; a plan has nodes and edges")
+        raise bad_input(f"{name}: unknown plan key {', '.join(sorted(set(plan) - {'nodes', 'edges'}))}; a plan has nodes and edges")
     keys = []
     for node in nodes:
         if not isinstance(node, dict) or not isinstance(node.get('key'), str) or not node['key'] or not isinstance(node.get('title'), str) or not node['title'].strip():
-            raise BoardError(f'{name}: every node is an object with a key and a title')
+            raise bad_input(f'{name}: every node is an object with a key and a title')
         if unknown := sorted(set(node) - fields):
-            raise BoardError(f"{name}: node {node['key']} has unknown field {', '.join(unknown)}; fields: {', '.join(sorted(fields))}")
+            raise bad_input(f"{name}: node {node['key']} has unknown field {', '.join(unknown)}; fields: {', '.join(sorted(fields))}")
         if not isinstance(node.get('description'), str) or not node['description'].strip():  # bd's create.require-description does not apply to --graph
-            raise BoardError(f"{name}: node {node['key']} needs a description (what and why; --description-file, or the node's \"description\")")
+            raise bad_input(f"{name}: node {node['key']} needs a description (what and why; --description-file, or the node's \"description\")")
         labels = node.get('labels', [])
         if not isinstance(labels, list) or not all(isinstance(label, str) for label in labels):
-            raise BoardError(f"{name}: node {node['key']}: labels is a list of strings")
+            raise bad_input(f"{name}: node {node['key']}: labels is a list of strings")
         if not isinstance(node.get('metadata', {}), dict):
-            raise BoardError(f"{name}: node {node['key']}: metadata is an object")
+            raise bad_input(f"{name}: node {node['key']}: metadata is an object")
         deps = node.get('deps', [])
         if not isinstance(deps, list) or not all(isinstance(dep, dict) and dep.get('target') for dep in deps):
-            raise BoardError(f"{name}: node {node['key']}: deps is a list of objects with a target (and a type)")
+            raise bad_input(f"{name}: node {node['key']}: deps is a list of objects with a target (and a type)")
         for dep in deps:
             refuse_old_link(dep.get('type') or WAIT_LINK, f"{name}: node {node['key']}")
         waits_on = node.get('waits_on', [])
         if not isinstance(waits_on, list) or not all(isinstance(wait, dict) and set(wait) in ({'on', 'for'}, {'on'}) and all(isinstance(wait[k], str) and wait[k].strip() for k in wait)
                                                       for wait in waits_on):
-            raise BoardError(f"{name}: node {node['key']}: waits_on is a list of {{\"on\": <key or id>, \"for\": \"<the input it uses>\"}}")
+            raise bad_input(f"{name}: node {node['key']}: waits_on is a list of {{\"on\": <key or id>, \"for\": \"<the input it uses>\"}}")
         keys.append(node['key'])
     if len(set(keys)) != len(keys):
-        raise BoardError(f'{name}: node keys repeat: {", ".join(sorted({key for key in keys if keys.count(key) > 1}))}')
+        raise bad_input(f'{name}: node keys repeat: {", ".join(sorted({key for key in keys if keys.count(key) > 1}))}')
     edges = plan.get('edges', [])
     if not isinstance(edges, list) or not all(isinstance(edge, dict) for edge in edges):
-        raise BoardError(f'{name}: edges is a list of objects (from_key or from_id, to_key or to_id, type)')
+        raise bad_input(f'{name}: edges is a list of objects (from_key or from_id, to_key or to_id, type)')
     for edge in edges:
         if set(edge) - PLAN_EDGE_KEYS or not (edge.get('from_key') or edge.get('from_id')) or not (edge.get('to_key') or edge.get('to_id')):
-            raise BoardError(f"{name}: an edge has {', '.join(sorted(PLAN_EDGE_KEYS))} only, from one side and to the other: {edge}")
+            raise bad_input(f"{name}: an edge has {', '.join(sorted(PLAN_EDGE_KEYS))} only, from one side and to the other: {edge}")
         refuse_old_link(edge.get('type') or WAIT_LINK, f'{name}: an edge')
     return plan
 
@@ -6785,29 +6813,29 @@ def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: li
     given = plan_waits(plan)
     nodes = plan['nodes']
     if refusal := type_refusal([str(node.get('type') or WORK_TYPE) for node in nodes]):
-        raise BoardError(refusal)
+        raise refuse('issue_type.types', refusal)
     added = [label for node in nodes for label in node.get('labels') or []]
     if refusal := kind_refusal(added) or label_shape_refusal(added):
-        raise BoardError(refusal)
+        raise refuse('labels.form', refusal)
     children = {edge.get('from_key') for edge in plan.get('edges') or [] if edge.get('type') == 'parent-child'}
     for node in nodes:  # queue.route: only --for writes for:, and a node's queue is its creator's call on a parentless node (another person's: queue.attended)
         labels = node.get('labels') or []
         if filed := [label for label in labels if label.startswith(FOR_PREFIX)]:
-            raise BoardError(f"{node['key']}: {', '.join(filed)}: a find for another person is filed with agents board create --for <person>")
+            raise refuse('queue.route', f"{node['key']}: {', '.join(filed)}: a find for another person is filed with agents board create --for <person>")
         if queue_labels(labels) and (node.get('parent') or node.get('parent_key') or node.get('parent_id') or node['key'] in children):
-            raise BoardError(f"{node['key']}: {', '.join(queue_labels(labels))}: a part takes its parent's queue")
+            raise refuse('queue.route', f"{node['key']}: {', '.join(queue_labels(labels))}: a part takes its parent's queue")
     for node in nodes:  # the limit a plain create had: a work item's long fields, not a decision's record
         if refusal := size_refusal({'id': node['key'], 'issue_type': node.get('type') or WORK_TYPE},
                                    {field: str(node[field]) for field in ('description', 'design', 'acceptance_criteria', 'notes') if node.get(field)}, update=False):
-            raise BoardError(refusal)
+            raise refuse('content.size', refusal)
     for node in nodes:
         if found := node.pop(FOUND_IN, None):
             if not ((board and found in board.by_id) or bd_show([found], comments=False)):
-                raise BoardError(f'{node["key"]}: found in {found}, which is unknown')
+                raise refuse('meta.found-in', f'{node["key"]}: found in {found}, which is unknown')
             node['metadata'] = {**(node.get('metadata') or {}), FOUND_IN: found}
         settings = {name: node.pop(name) for name in ITEM_SETTING_KEYS if name in node}
         if refusal := setting_refusal(node['key'], node.get('type') or WORK_TYPE, settings):
-            raise BoardError(refusal)
+            raise refuse('setting.values', refusal)
         if settings:
             node['metadata'] = {**(node.get('metadata') or {}), **settings}
     links, types = plan_links(plan)
@@ -6815,7 +6843,7 @@ def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: li
         if why:
             refuse_long_comment(wait_comment(target, why))
         if target not in types and not target.startswith('external:') and not ((board and target in board.by_id) or bd_show([target], comments=False)):
-            raise BoardError(f'{waiter} waits on {target}, which is unknown')
+            raise bad_input(f'{waiter} waits on {target}, which is unknown')
     parents = plan_parents(plan, links)
     if board is None and (holds or any(end not in types for a, b, _ in links for end in (a, b) if not end.startswith('external:'))
                           or any(parent not in types for found in parents.values() for parent in found)):
@@ -6823,7 +6851,7 @@ def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: li
     loose = {node['key'] for node in nodes if (node.get('metadata') or {}).get(NO_COMMIT) is True}
     _, waits = edge_rules(board, links, verb, types, holds, parents, fors={(waiter, target) for waiter, target, why in given if why}, loose=loose)
     if shared is not None and acting() and (refusal := plan_queue_refusal(plan)):
-        raise BoardError(refusal)
+        raise refusal
     if for_:
         for_person(plan, for_)
     plan_with_queue(plan)
@@ -6834,13 +6862,13 @@ def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: li
     atexit.register(os.unlink, handle.name)
     result = bd('create', '--graph', handle.name, '--json')
     if result.returncode != 0:
-        raise BoardError(f'`bd create` failed: {bd_message(result)}')
+        raise fault(f'`bd create` failed: {bd_message(result)}')
     try:
         made = dict(json.loads(result.stdout).get('ids') or {})
     except (ValueError, AttributeError):
         made = {}
     if not made:
-        raise BoardError(f'created, but bd printed no ids: {result.stdout.strip()[:200]}')
+        raise fault(f'created, but bd printed no ids: {result.stdout.strip()[:200]}')
     return made, waits, given
 
 
@@ -6862,7 +6890,7 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
         record = board.by_id.get(parent) if board else None
         records = [record] if record else bd_show([parent], comments=False)
         if not records:
-            raise BoardError(f'unknown parent {parent}')
+            raise bad_input(f'unknown parent {parent}')
         node['parent_id'] = records[0]['id']
         labels += inherited_labels(records[0], labels)
     if labels:
@@ -6896,7 +6924,7 @@ def create_ruling_revision(board: Board, old: str, title: str, description: str,
         return new
     failed = record_holds(Board.load('all'), new, holds) if holds else []
     if failed:
-        raise BoardError(f"{new} created, but {', '.join(failed)} do not wait on it: agents board wait {' '.join(failed)} --on {new}")
+        raise fault(f"{new} created, but {', '.join(failed)} do not wait on it: agents board wait {' '.join(failed)} --on {new}")
     return new
 
 
@@ -6915,7 +6943,7 @@ def unratified_confirmation(board: Board, issue: dict, reversal: str) -> str:
                  if other in board.by_id and board.by_id[other].get('issue_type') == 'decision'
                  and board.by_id[other].get('description') == description]
     if len(questions) > 1:
-        raise BoardError(f'{item_id}: more than one related Confirm-or-revise question; resolve the duplicate before rerunning')
+        raise fault(f'{item_id}: more than one related Confirm-or-revise question; resolve the duplicate before rerunning')
     if questions:
         return questions[0]['id']
     labels = [label for label in issue.get('labels') or [] if label.startswith('topic:')]
@@ -6928,19 +6956,19 @@ def record(board: Board, args) -> int:
     actor = caller()
     issue = held(board, args.id, actor)
     if issue.get('issue_type') != 'decision':
-        raise BoardError(f'{args.id}: {issue.get("issue_type")}, not a decision')
+        raise bad_input(f'{args.id}: {issue.get("issue_type")}, not a decision')
     allowed_statuses = ('open', 'decided')
     if issue['status'] not in allowed_statuses and not (args.unratified and issue['status'] == 'in_force'):
-        raise BoardError(f"{args.id}: {issue['status']}; an in-force record changes through agents board ruling revise")
+        raise refuse('status.record', f"{args.id}: {issue['status']}; an in-force record changes through agents board ruling revise")
     try:
         text = Path(args.file).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
-        raise BoardError(f'cannot read {args.file}: {error}') from None
+        raise bad_input(f'cannot read {args.file}: {error}') from None
     # An unratified ruling carries how to reverse it (unattended protocol).
     required = RECORD_SECTIONS + (('Reversal',) if args.unratified else ())
     missing = missing_sections(text, required)
     if missing:
-        raise BoardError(f"{args.file} lacks the record section(s) {', '.join('## ' + name for name in missing)}")
+        raise bad_input(f"{args.file} lacks the record section(s) {', '.join('## ' + name for name in missing)}")
     replaces = list(dict.fromkeys(args.replaces))
     status = 'in_force' if args.unratified else 'decided'
     closing, taking, operations = replaced_checks(board, args.id, replaces, actor, args.unratified)  # every refusal before the first write
@@ -6957,7 +6985,7 @@ def record(board: Board, args) -> int:
     lint = json.loads(bd_checked('lint', args.id, '--json') or '{}')
     unlinted = [', '.join(result.get('missing') or []) for result in lint.get('results') or [] if result.get('missing')]
     if unlinted:
-        raise BoardError(f"{args.id}: recorded ({status.replace('_', ' ')}), but bd lint reports missing {'; '.join(unlinted)}")
+        raise fault(f"{args.id}: recorded ({status.replace('_', ' ')}), but bd lint reports missing {'; '.join(unlinted)}")
     failed = []
     for old in closing:
         if old in taking:
@@ -6998,27 +7026,27 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
     for old in replaces:
         issue = board.by_id.get(old)
         if issue is None:
-            problems.append(f'--replaces {old}: unknown')
+            problems.append(bad_input(f'--replaces {old}: unknown'))
         elif old == new or issue.get('issue_type') != 'decision':
-            problems.append(f'--replaces {old}: not another decision ruling')
+            problems.append(bad_input(f'--replaces {old}: not another decision ruling'))
         elif issue['status'] == 'closed':
             if new in superseding(board, old):
                 continue
             if superseding(board, old):
-                problems.append(f'--replaces {old}: closed and already superseded')
+                problems.append(refuse('tracks.revisable', f'--replaces {old}: closed and already superseded'))
             elif missing_sections(str(issue.get('description') or '')):
-                problems.append(f'--replaces {old}: closed question, not a planned ruling')
+                problems.append(refuse('tracks.revisable', f'--replaces {old}: closed question, not a planned ruling'))
             else:
                 removes += [(a, b, kind) for a, b, kind in board.between(new, old) if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
                 links.append((new, old, REVISES))
                 if in_force:
                     closing.append(old)
                     if refusal := supersede_who_refusal(board, old, actor):
-                        problems.append(f'--replaces {refusal}')
+                        problems.append(combined([refusal], f'--replaces {refusal}'))
                 else:
                     later.append(old)
         elif issue['status'] not in ('decided', 'in_force'):
-            problems.append(f"--replaces {old}: {issue['status']}, not decided or released")
+            problems.append(refuse('tracks.revisable', f"--replaces {old}: {issue['status']}, not decided or released"))
         else:
             # The supersede replaces any other link on the pair (bd keeps one edge per pair), so the revision link replaces it now.
             removes += [(a, b, kind) for a, b, kind in board.between(new, old) if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
@@ -7029,17 +7057,17 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
             if (refusal := hold_refusal(board, issue, actor)) == 'gone':
                 taking.append(old)
             elif refusal:
-                problems.append(f'--replaces {old}: {refusal}')
+                problems.append(refuse('supersedes.hold', f'--replaces {old}: {refusal}'))
             if refusal := supersede_who_refusal(board, old, actor):
-                problems.append(f'--replaces {refusal}')
+                problems.append(combined([refusal], f'--replaces {refusal}'))
             closing.append(old)
     carried = {(target, rule_of(board.by_id[old])) for old in [*closing, *later] for target in board.revises(old) if target != new and target not in replaces}
     carried |= {(target, rule_of(board.by_id[new])) for target in board.revises(new) if target not in replaces}  # a rerun's own links are no other revision
     if len(carried) > 1:  # the supersedes carry the closing records' pending revisions onto `new`, which keeps one revision (target and rule)
-        problems.append(f"{new} would revise more than one record or rule ({', '.join(sorted(target + (f' ({rule})' if rule else '') for target, rule in carried))}); "
-                        'bd keeps one revision rule per record: finish the revisions one record at a time')
+        problems.append(refuse('tracks.one-revision', f"{new} would revise more than one record or rule ({', '.join(sorted(target + (f' ({rule})' if rule else '') for target, rule in carried))}); "
+                                'bd keeps one revision rule per record: finish the revisions one record at a time'))
     if problems:
-        raise BoardError('record refused:\n  ' + '\n  '.join(problems))
+        raise combined(problems, 'record refused:\n  ' + '\n  '.join(map(str, problems)))
     edge_rules(board, links, 'ruling', removes=removes)  # write_edges checks again at the write
     return closing, taking, (links, removes)
 
@@ -7064,19 +7092,19 @@ def check_replaces(board: Board, args) -> None:
         elif issue['status'] not in ('decided', 'in_force'):
             problems.append(f'{item_id} is {issue["status"]} decision, not a decided or in-force ruling')
     if problems:
-        raise BoardError('supersedes needs a recorded ruling: ' + '; '.join(problems))
+        raise bad_input('supersedes needs a recorded ruling: ' + '; '.join(problems))
 
     replaces = [item_id for item_id, issue in rows.items() if issue['status'] == 'decided']
     revises = [item_id for item_id in hits if item_id not in replaces]
     if len(revises) > 1:
-        raise BoardError(f'a question revises at most one in-force record ({", ".join(revises)}); split the question')
+        raise bad_input(f'a question revises at most one in-force record ({", ".join(revises)}); split the question')
 
     actor = caller()
     held = [(item_id, rows[item_id].get('assignee'), hold_refusal(board, rows[item_id], actor)) for item_id in replaces]
     refused = [(item_id, holder, reason) for item_id, holder, reason in held if reason and reason != 'gone']
     if refused:
         item_id, holder, _ = refused[0]
-        raise BoardError(f'{item_id} (held by {holder}) would close at Record; ask that session to hand it off (agents board unclaim), or choose another outcome')
+        raise bad_input(f'{item_id} (held by {holder}) would close at Record; ask that session to hand it off (agents board unclaim), or choose another outcome')
 
     carried = {(dep['depends_on_id'], rule_of(rows[item_id]))
                for item_id in replaces for dep in rows[item_id].get('dependencies') or []
@@ -7084,7 +7112,7 @@ def check_replaces(board: Board, args) -> None:
     carried.update((item_id, None) for item_id in revises)
     if len(carried) > 1:
         detail = ', '.join(sorted(target + (f' ({rule})' if rule else '') for target, rule in carried))
-        raise BoardError(f'the new record would revise more than one record or rule ({detail}); a record keeps one revision: split the question')
+        raise bad_input(f'the new record would revise more than one record or rule ({detail}); a record keeps one revision: split the question')
 
     print(json.dumps({'replaces': replaces, 'revises': revises[0] if revises else None,
                       'titles': {item_id: rows[item_id].get('title') or '' for item_id in hits}}))
@@ -7100,27 +7128,29 @@ def reason_optional(issue: dict, record: dict) -> bool:
     return record.get('issue_type') in ('decision', 'gate')
 
 
-def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: 'Board | None' = None) -> str | None:
+def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: 'Board | None' = None) -> BoardError | None:
     """The rules about what a wait may name, one owner for every writer (wait, create and plan links, ruling revise and supersede, the protocol
     engine's links): nothing waits on an `external:` reference (it never blocks), on a deferred record (set aside, it would never end) or on one closed dropped (a question excepted: it
-    releases its waiters), and an in-force ruling waits only for its planning, a live decision or a human gate. A new record (in a plan, or a gate
+    releases its waiters), and an in-force ruling waits only for its planning: a live decision, another in-force ruling until it is planned and closed
+    (nixes-r0e01), or a human gate. A new record (in a plan, or a gate
     being made) has no id: `waiter` and `record` are then what it will be, or `waiter` None when only the target is known."""
     who = waiter.get('id') or f"the new {waiter.get('issue_type')}" if waiter else 'a new item'
     if target.startswith('external:'):  # blocks.external: bd never blocks on one (model.md Waits), so the wait would be met at once
-        return (f'{who} cannot wait on {target}: an external reference never blocks; a step outside the board is a human gate '
-                f'(agents board gate create --blocks <item> --reason "waits for <project>:<capability>")')
+        return refuse('blocks.external', f'{who} cannot wait on {target}: an external reference never blocks; a step outside the board is a human gate '
+                      f'(agents board gate create --blocks <item> --reason "waits for <project>:<capability>")')
     if waiter and waiter.get('issue_type') == 'milestone':
-        return f"{who} is a milestone: it waits on nothing, a change request is part of it (agents board move <change request> --to {waiter.get('id') or '<milestone>'})"
+        return refuse('blocks.waiter', f"{who} is a milestone: it waits on nothing, a change request is part of it "
+                      f"(agents board move <change request> --to {waiter.get('id') or '<milestone>'})")
     unit = (board.cr_of(target) or target) if board and target in board.by_id else target  # an item of a deferred change request is set aside with it
     if record.get('status') == 'deferred' or (board and board.by_id.get(unit, {}).get('status') == 'deferred'):
-        return (f'{who} cannot wait on {target}: {"it" if unit == target else unit} is deferred, set aside by nothing that would bring it back; undefer it first '
-                f'(agents board undefer {unit}), or wait on the record that would')
+        return refuse('blocks.target', f'{who} cannot wait on {target}: {"it" if unit == target else unit} is deferred, set aside by nothing that would bring it back; '
+                      f'undefer it first (agents board undefer {unit}), or wait on the record that would')
     if board and target in board.by_id and any(is_dropped_work(board.by_id.get(each)) for each in (target, unit)):
-        return (f'{who} cannot wait on {target}: {"it" if unit == target else unit} was closed dropped and never delivers; '
-                f'wait on the record that keeps the work')
+        return refuse('blocks.target', f'{who} cannot wait on {target}: {"it" if unit == target else unit} was closed dropped and never delivers; '
+                      f'wait on the record that keeps the work')
     if waiter and waiter.get('issue_type') == 'decision' and waiter['status'] == 'in_force' and not planning_wait(record):
-        return (f'{who}: an in-force ruling waits for planning only (a live decision or a human gate), '
-                f"not on {target} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and wait that work on {target}")
+        return refuse('blocks.waiter', f'{who}: an in-force ruling waits for planning only (a live decision, an in-force ruling until it is planned, or a human gate), '
+                      f"not on {target} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and wait that work on {target}")
     return None
 
 
@@ -7131,7 +7161,7 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
     issue = board.by_id[item_id]
     record = board.by_id.get(blocker, {})
     if not reason and not reason_optional(issue, record):
-        raise BoardError(f'{item_id}: a work item waits for an input: agents board wait {item_id} --on {blocker} --for "<the input it uses>" '
+        raise refuse('blocks.for', f'{item_id}: a work item waits for an input: agents board wait {item_id} --on {blocker} --for "<the input it uses>" '
                          '(optional only when the target is a decision or a gate)')
     edges = board.between(item_id, blocker)
     own = actor is not None and in_hand(issue, actor) and board.is_open(blocker) and group_of(board, issue) != ITEM_GROUP  # an item has no hold to hand back
@@ -7154,7 +7184,7 @@ def wait_items(board: Board, ids: list[str], blocker: str, reason: str | None, a
     for item_id in ids:
         try:
             if item_id == blocker:
-                raise BoardError(f'{item_id}: cannot wait on itself')
+                raise bad_input(f'{item_id}: cannot wait on itself')
             require_open(board, [item_id])
             print(wait_one(board, item_id, blocker, reason, actor))
         except BoardError as error:
@@ -7167,7 +7197,7 @@ def wait_command(board: Board, args) -> int:
     """`board wait <item>... --on <target> [--for "<input>"]`: the one waiting relation, written on the waiter; prints "X waits on Y for …"."""
     actor = caller()
     if args.target not in board.by_id and not args.target.startswith('external:'):  # an external reference meets its own rule (edge_rules)
-        raise BoardError(f'unknown target {args.target}')
+        raise bad_input(f'unknown target {args.target}')
     if args.for_:
         refuse_long_comment(wait_comment(args.target, args.for_))
     return 1 if wait_items(board, args.ids, args.target, args.for_, actor) else 0
@@ -7176,7 +7206,7 @@ def wait_command(board: Board, args) -> int:
 def known_items(board: Board, ids: list[str]) -> None:
     unknown = [item_id for item_id in ids if item_id not in board.by_id]
     if unknown:
-        raise BoardError(f"unknown {', '.join(unknown)}")
+        raise bad_input(f"unknown {', '.join(unknown)}")
 
 
 def move_command(board: Board, args) -> int:
@@ -7205,7 +7235,7 @@ def update_command(board: Board, args) -> int:
         if (value := getattr(args, name)) is not None:
             changes += ['--set-metadata', f'{name}={value}'] if value else ['--unset-metadata', name]
     if not changes:
-        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --no-commit, --look or --view '
+        raise bad_input('nothing to change: give --title, --priority, --label, --unlabel, --no-commit, --look or --view '
                          '(long fields: agents board field; claim: agents board claim)')
     write_fields(board, args.ids, changes)
     for item_id in args.ids:
@@ -7229,7 +7259,7 @@ def unlink_command(board: Board, args) -> int:
     known_items(board, [args.a, args.b])
     edges = board.between(args.a, args.b)
     if not edges:
-        raise BoardError(f'{args.a} and {args.b} are not linked')
+        raise bad_input(f'{args.a} and {args.b} are not linked')
     write_edges(board, 'unlink', f'board unlink {args.a} {args.b}', removes=edges)  # a parent edge changes by move; an item's wait under the hold rule
     for source, target, kind in edges:
         print(f'{source} no longer waits on {target}' if blocking(kind) else f'{source} -> {target}: unlinked ({kind})')
@@ -7241,10 +7271,7 @@ def reopen_command(board: Board, args) -> int:
     known_items(board, args.ids)
     crs = [item_id for item_id in args.ids if board.by_id[item_id].get('issue_type') == CR_TYPE]
     if crs:
-        raise BoardError(f"{', '.join(crs)} is a change request: closed means landed or rejected; a change that still has to land is a new change request (agents board create)")
-    superseded = [item_id for item_id in args.ids if superseding(board, item_id)]
-    if superseded:
-        raise BoardError(f"{', '.join(superseded)} is a superseded ruling: record a revision to put it back in force (agents board ruling revise {superseded[0]})")
+        raise bad_input(f"{', '.join(crs)} is a change request: closed means landed or rejected; a change that still has to land is a new change request (agents board create)")
     for item_id in args.ids:  # every id's whole reopen first: a refused one leaves the others closed too
         move(board.by_id[item_id], 'reopen', board=board, write=False)
     for item_id in args.ids:
@@ -7277,6 +7304,17 @@ def dropped_waits_refusal(board: Board, item_id: str, together: frozenset[str]) 
             f"unlink them ({'; '.join(dep_fix(waiter, target) for waiter, target in waits)}), wait on the record that keeps the work, or close them in the same call")
 
 
+def release_holds_refusal(board: Board, item_id: str, together: frozenset[str]) -> str | None:
+    """Why a record does not come into force (status.release-holds, nixes-9cbib): it waits on an open record that is not in force, or a live
+    record revises it, and neither comes into force in the same call (`together`)."""
+    revisers = set(board.revised_by(item_id))
+    blocking = [b for b in board.release_holds(item_id) if b not in together]
+    if not blocking:
+        return None
+    return f'{item_id}: waits on ' + ', '.join(f"{b} ({'revises it: release them together, or close the revision' if b in revisers else board.by_id.get(b, {}).get('status', 'not found')})"
+                                   for b in blocking)
+
+
 def deferred_waiters(board: Board, item_id: str, deferring: set[str] = frozenset()) -> list[str]:
     """What deferring it would hang (board-coordination.md#deferrals-and-environment-facts). Deferred work holds up no live item:
     the live items waiting on it (a milestone's member detaches instead). A deferred question is a parked decision its held items
@@ -7307,17 +7345,15 @@ def defer_command(args) -> int:
     """`board defer <id>... --reason "<why>" [--until <date>]`: set aside, blocked by nothing. No date: someday, only `undefer`
     reopens it; a date only surfaces it as due. A deferral records no condition (a condition on an item or event is a wait)."""
     if args.until and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', args.until):
-        raise BoardError(f'--until takes a day, YYYY-MM-DD: {args.until}')
+        raise bad_input(f'--until takes a day, YYYY-MM-DD: {args.until}')
     board = Board.load('status')
     known_items(board, args.ids)
     by = 'user' if may_attend(board) else session_actor(caller())  # a lead or solo session defers for the user; autopilot's deferral is its own
     refuse_long_comment(f'board defer: {args.reason}')
+    for item_id in args.ids:  # every id's whole deferral first (blocks.target: guard no-hung-waiters)
+        move(board.by_id[item_id], 'defer', board=board, together=frozenset(args.ids), write=False)
     for item_id in args.ids:
-        waiting = deferred_waiters(board, item_id, set(args.ids))
-        if waiting:
-            raise BoardError(f"{item_id}: {', '.join(waiting)} would hang on it deferred: {deferred_fix(board, item_id, waiting)}")
-    for item_id in args.ids:
-        move(board.by_id[item_id], 'defer', board=board, fields={DEFERRED_BY: by, REVISIT: args.until})  # --until: a date that only surfaces it
+        move(board.by_id[item_id], 'defer', board=board, together=frozenset(args.ids), fields={DEFERRED_BY: by, REVISIT: args.until})  # --until: a date that only surfaces it
         comment(item_id, f'board defer: {args.reason}')
         print(f'{item_id}: deferred')
     return 0
@@ -7355,14 +7391,14 @@ def gate_create(args) -> int:
         except BoardError:
             routed = False
         if not routed:
-            raise BoardError(f'the gate stands but is not routed to {args.for_}: agents board bd --raw --yes update <gate id> --add-label {label}')
+            raise fault(f'the gate stands but is not routed to {args.for_}: agents board bd --raw --yes update <gate id> --add-label {label}')
     return 0
 
 
 def gate_resolve(args) -> int:
     found = bd_show([args.gate], comments=False)
     if not found or not is_human_gate(found[0]):
-        raise BoardError(f'{args.gate}: not a human gate (a gate is a step only a person takes: agents board gate create)')
+        raise bad_input(f'{args.gate}: not a human gate (a gate is a step only a person takes: agents board gate create)')
     move(found[0], 'close', reason=(args.reason or 'gate resolved').ljust(20, '.'), force=True)  # a gate closes forced: its wait is what it ends
     print(f'{args.gate}: resolved')
     return 0
@@ -7378,14 +7414,14 @@ def revise(board: Board, args) -> int:
     holds = waits['item'][0]
     old = board.by_id.get(args.old)
     if old is None or old.get('issue_type') != 'decision':
-        raise BoardError(f'{args.old}: unknown or not a decision')
+        raise bad_input(f'{args.old}: unknown or not a decision')
     if old['status'] == 'open':
-        raise BoardError(f"{args.old}: {old['status']}, not yet a ruling; amend the question instead")
+        raise refuse('tracks.revisable', f"{args.old}: {old['status']}, not yet a ruling; amend the question instead")
     if old['status'] == 'closed':
         if superseding(board, args.old):
-            raise BoardError(f"{args.old}: closed and already superseded, not a planned ruling")
+            raise refuse('tracks.revisable', f"{args.old}: closed and already superseded, not a planned ruling")
         if missing_sections(str(old.get('description') or '')):
-            raise BoardError(f"{args.old}: closed question, not a planned ruling")
+            raise refuse('tracks.revisable', f"{args.old}: closed question, not a planned ruling")
     labels = args.label if args.label \
         else [label for label in old.get('labels') or [] if label.startswith('topic:')]
     new = create_ruling_revision(board, args.old, args.title, read_text_arg(args.body_file), holds=holds,
@@ -7413,39 +7449,38 @@ def release(board: Board, args) -> int:
         if issue['id'] in drafts:
             continue
         if issue.get('issue_type') != 'decision':
-            problems.append(f"{issue['id']}: not a decision")
+            problems.append(bad_input(f"{issue['id']}: not a decision"))
         elif issue['status'] not in ('decided', 'in_force'):
-            problems.append(f"{issue['id']}: {issue['status']}, not decided")
-        blocking = [b for b in board.release_holds(issue['id']) if b not in args.ids]
-        if blocking and issue['status'] == 'decided':
-            revisers = set(board.revised_by(issue['id']))
-            named = ', '.join(f"{b} ({'revises it: release them together, or close the revision' if b in revisers else board.by_id.get(b, {}).get('status', 'not found')})"
-                              for b in blocking)
-            problems.append(f"{issue['id']}: waits on {named}")
+            problems.append(refuse('status.release', f"{issue['id']}: {issue['status']}, not decided"))
+        elif issue['status'] == 'decided':  # the release row: its status, Who and the settled premises (status.release-holds), all ids before the first write
+            try:
+                move(issue, 'ruling release', board=board, together=frozenset(args.ids), write=False)
+            except BoardError as error:
+                problems.append(error)
         if issue['status'] in ('decided', 'in_force'):  # every record it revises is superseded below: a live session's hold refuses first
             for old in board.revises(issue['id']):
                 if (refusal := hold_refusal(board, board.by_id.get(old, {}), actor)) == 'gone':
                     taking.append(old)
                 elif refusal:
-                    problems.append(f'{old}: {refusal}')
+                    problems.append(refuse('supersedes.hold', f'{old}: {refusal}'))
     closes = []
     for question, records in args.closes:
         issue = board.by_id.get(question)
         if issue is None:
-            problems.append(f'{question}: unknown')
+            problems.append(bad_input(f'{question}: unknown'))
         elif issue['status'] == 'closed':
             print(f'{question}: already closed')
             continue
         elif issue.get('issue_type') != 'decision' or issue['status'] != 'open':
-            problems.append(f"{question}: {issue['status']} {issue.get('issue_type')}, not an open question")
+            problems.append(refuse('status.release', f"{question}: {issue['status']} {issue.get('issue_type')}, not an open question"))
         elif issue.get('assignee') and session_actor(issue['assignee']) != session_actor(actor):
-            problems.append(f"{question}: held by {issue['assignee']}; hand it off before closing it")
+            problems.append(refuse('status.release', f"{question}: held by {issue['assignee']}; hand it off before closing it"))
         unknown = [record for record in records if record not in args.ids]
         if unknown:
-            problems.append(f"{question}: answered by {', '.join(unknown)}, which this call does not release")
+            problems.append(bad_input(f"{question}: answered by {', '.join(unknown)}, which this call does not release"))
         closes.append((question, records))
     if problems:
-        raise BoardError('release refused:\n  ' + '\n  '.join(problems))
+        raise combined(problems, 'release refused:\n  ' + '\n  '.join(str(problem) for problem in problems))
 
     pending = [issue for issue in rulings if issue['status'] == 'decided' and issue['id'] not in drafts]
     if pending:
@@ -7453,7 +7488,7 @@ def release(board: Board, args) -> int:
         unlinted = [f"{result['id']}: missing {', '.join(result.get('missing') or [])}"
                     for result in lint.get('results') or [] if result.get('missing')]
         if unlinted:
-            raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
+            raise bad_input('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
         # The items an in-force ruling changes wait on it; planning closes it and they are ready.
         for issue in pending:  # one compare-and-set each; a stop leaves the rest decided, and a rerun releases them. The snapshot takes the new status: the waits below read it
             move(issue, 'ruling release', board=board)
@@ -7534,7 +7569,7 @@ def carry_revisions(board: Board, old: str, new: str, closing: frozenset[str] = 
     own = [t for t in board.revises(new) if t != old and t not in closing]
     rule, new_rule = rule_of(board.by_id[old]), rule_of(board.by_id[new])
     if own and (set(own) != set(targets) or rule != new_rule):
-        raise BoardError(f"{new} already revises {', '.join(own)} and {old} revises {', '.join(targets)}; bd keeps one "
+        raise refuse('tracks.one-revision', f"{new} already revises {', '.join(own)} and {old} revises {', '.join(targets)}; bd keeps one "
                          'revision rule per record: finish the revisions one record at a time')
     if rule is not None and rule != new_rule:
         put_meta(board.by_id[new], **{REVISES_RULE: rule})
@@ -7561,11 +7596,11 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
         refuse_long_comment(partial_text(rule, new))
     # supersedes.who and supersedes.hold, partial and full, before the first write: a refused supersede leaves no carried revision behind.
     if refusal := supersede_who_refusal(board, old, actor):
-        raise BoardError(refusal)
+        raise refusal
     if (held := hold_refusal(board, board.by_id.get(old, {'id': old}), actor)) == 'gone':
         take(board, argparse.Namespace(ids=[old], force=None, agreed=None))
     elif held:
-        raise BoardError(f'{old}: {held}')
+        raise refuse('supersedes.hold', f'{old}: {held}')
     removes = [(a, b, kind) for a, b, kind in board.between(old, new) if kind != 'parent-child' and (a, b, kind) not in partial]
     carried, uncarried = carry_revisions(board, old, new, closing) if carry and rule is None else ([], [])
     write_edges(board, 'ruling', f'board ruling supersede {old} --with {new}', [*partial, *carried], [*removes, *uncarried])
@@ -7588,11 +7623,11 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
 def supersede(board: Board, args) -> int:
     actor = caller()
     if args.old not in board.by_id:
-        raise BoardError(f'unknown {args.old}')
+        raise bad_input(f'unknown {args.old}')
     if args.partial is None:
         require_open(board, [args.new])  # a full replacement blocks items on the new record until it is planned
     elif args.new not in board.by_id:
-        raise BoardError(f'unknown {args.new}')  # a closed record still supersedes one rule: the edge is the record
+        raise bad_input(f'unknown {args.new}')  # a closed record still supersedes one rule: the edge is the record
     return 1 if supersede_pair(board, args.old, args.new, args.partial, actor, carry=True) else 0
 
 
@@ -7623,7 +7658,7 @@ def normalized_remote(url: str) -> str:
 def project_remote() -> str:
     result = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True)
     if result.returncode != 0 or not result.stdout.strip():
-        raise BoardError("this project's repository has no origin remote: name the url")
+        raise fault("this project's repository has no origin remote: name the url")
     return result.stdout.strip()
 
 
@@ -7633,10 +7668,10 @@ def ask_person() -> str:
     if who:
         return who
     if not sys.stdin.isatty():
-        raise BoardError(PERSON_HELP)
+        raise bad_input(PERSON_HELP)
     who = input('Your name for queue labels (queue:<name>), set in global git config: ').strip()
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', who):
-        raise BoardError(f'{who!r} does not fit a label; {PERSON_HELP}')
+        raise bad_input(f'{who!r} does not fit a label; {PERSON_HELP}')
     subprocess.run(['git', 'config', '--global', 'agents.person', who], check=True)
     return who
 
@@ -7652,22 +7687,22 @@ def send_first(remote: str, url: str, known: bool) -> None:
     if result.returncode == 0:
         return
     if known:
-        raise BoardError(f'sync failed: {last_line(result.stderr + result.stdout)}')
+        raise fault(f'sync failed: {last_line(result.stderr + result.stdout)}')
     pushed = bd('dolt', 'push', '--remote', remote)
     output = pushed.stderr + pushed.stdout
     if 'has no branches' in output:
-        raise BoardError(f"{url} is a completely empty repository and can't take a first push: commit something to it first, then rerun")
+        raise fault(f"{url} is a completely empty repository and can't take a first push: commit something to it first, then rerun")
     if pushed.returncode != 0:
-        raise BoardError(f'first push failed: {last_line(output)}')
+        raise fault(f'first push failed: {last_line(output)}')
 
 
 def readable_remote(url: str) -> list[str] | None:
     """The repository's refs before anything is sent to it; refuses one that can't be read or can't take a first push."""
     refs, error = remote_refs(url)
     if refs is None and url.startswith('git+'):
-        raise BoardError(f'cannot read {url}: {error}')
+        raise fault(f'cannot read {url}: {error}')
     if refs == []:
-        raise BoardError(f"{url} is a completely empty repository and can't take a first push: commit something to it first, then rerun")
+        raise fault(f"{url} is a completely empty repository and can't take a first push: commit something to it first, then rerun")
     return refs
 
 
@@ -7738,7 +7773,7 @@ def to_server(beads: Path) -> None:
             bd_checked('backup', 'remove')  # the restore registers the temporary backup for future syncs
             lost = before - {row['id'] for row in exported()}
             if lost:
-                raise BoardError(f"the server board lacks {', '.join(sorted(lost))}; nothing converted")
+                raise fault(f"the server board lacks {', '.join(sorted(lost))}; nothing converted")
         except BaseException:
             stop_server(root)
             shutil.rmtree(beads, ignore_errors=True)
@@ -7760,19 +7795,19 @@ def project_pairs(args) -> list[tuple[str, str]]:
             continue
         value = value.strip()
         if not value:
-            raise BoardError(f'--{name} is empty')
+            raise bad_input(f'--{name} is empty')
         if name == 'target' and (git(Path.cwd(), 'check-ref-format', '--branch', value, check=False).returncode != 0
                                  or git(Path.cwd(), 'rev-parse', '--verify', '-q', f'refs/heads/{value}', check=False).returncode != 0):
-            raise BoardError(f'--target {value!r} is not a local branch of this repository')
+            raise bad_input(f'--target {value!r} is not a local branch of this repository')
         if name in ('look', 'view') and value not in {'look': LOOKS, 'view': VIEWS}[name]:
-            raise BoardError(f"--{name} {value!r} is not one of {', '.join({'look': LOOKS, 'view': VIEWS}[name])}")
+            raise bad_input(f"--{name} {value!r} is not one of {', '.join({'look': LOOKS, 'view': VIEWS}[name])}")
         if name in ('setup', 'checks'):
             first = shlex.split(value)[0] if value else ''
             resolved = subprocess.run(['/bin/sh', '-c', 'command -v "$1"', 'board', first], capture_output=True, text=True)
             if resolved.returncode != 0:
                 if '/' not in first and (Path.cwd() / first).is_file():
-                    raise BoardError(f'--{name}: {first} cannot be resolved by /bin/sh; use ./{first}')
-                raise BoardError(f'--{name}: {first} cannot be resolved by /bin/sh')
+                    raise bad_input(f'--{name}: {first} cannot be resolved by /bin/sh; use ./{first}')
+                raise bad_input(f'--{name}: {first} cannot be resolved by /bin/sh')
         pairs.append((SETTINGS[name], value))
     return pairs
 
@@ -7805,7 +7840,7 @@ def setup(args) -> int:
     settings, and its travelling ones reach the others by sync."""
     toplevel = subprocess.run(['git', 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
     if toplevel.returncode != 0:
-        raise BoardError('run agents board setup inside the project repository')
+        raise fault('run agents board setup inside the project repository')
     os.chdir(toplevel.stdout.strip())
     wanted = project_pairs(args)
     beads = beads_dir()
@@ -7813,16 +7848,16 @@ def setup(args) -> int:
     if beads is None:
         prefix = args.prefix or default_prefix(Path.cwd())
         if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', prefix):
-            raise BoardError(f'{prefix!r} does not fit an id prefix: lowercase letters, digits and dashes')
+            raise bad_input(f'{prefix!r} does not fit an id prefix: lowercase letters, digits and dashes')
         bd_checked('init', *([] if args.embedded else ['--server']), '--stealth', '--prefix', prefix, '--skip-hooks', '--skip-agents', stdin='')
         beads = Path.cwd() / '.beads'
         print(f"created the board {prefix} ({'embedded' if args.embedded else 'server'} mode) in {beads}")
     else:
         mode = json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') or 'embedded'
         if args.embedded and mode != 'embedded':
-            raise BoardError(f'this board is {mode}; --embedded applies to a new board only')
+            raise bad_input(f'this board is {mode}; --embedded applies to a new board only')
         if args.prefix:
-            raise BoardError('this project already has a board: drop --prefix')
+            raise bad_input('this project already has a board: drop --prefix')
         os.chdir(beads.parent)
         if args.server and mode == 'embedded':
             to_server(beads)
@@ -7844,7 +7879,7 @@ def setup(args) -> int:
         committed = bd('dolt', 'commit', '-m', 'board setup')  # in server mode an uncommitted status.custom stops the first sync
         output = committed.stdout + committed.stderr
         if committed.returncode != 0 and 'nothing to commit' not in output.lower():
-            raise BoardError(f'the settings are set but not committed: {last_line(output)}; rerun agents board setup')
+            raise fault(f'the settings are set but not committed: {last_line(output)}; rerun agents board setup')
     else:
         print('settings up to date')
     for warning in hiding_excludes():
@@ -7858,9 +7893,9 @@ def share(args) -> int:
     left unrouted."""
     beads = beads_dir()
     if beads is None:
-        raise BoardError('no board here: agents board setup creates one to share, or agents board join joins one')
+        raise fault('no board here: agents board setup creates one to share, or agents board join joins one')
     if json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') != 'server':
-        raise BoardError('a shared board needs server mode, and this board is embedded: agents board setup --server converts it in place '
+        raise fault('a shared board needs server mode, and this board is embedded: agents board setup --server converts it in place '
                          '(pause the sessions writing to it first)')
     os.chdir(beads.parent)
     remotes = bd_remotes()
@@ -7868,7 +7903,7 @@ def share(args) -> int:
         remote = 'origin' if 'origin' in remotes else sorted(remotes)[0]
         url = remotes[remote]
         if args.url and normalized_remote(args.url) != url:
-            raise BoardError(f'this board already syncs with {url} ({remote}); moving it: agents board relocate <url> (beads-setup.md#history)')
+            raise bad_input(f'this board already syncs with {url} ({remote}); moving it: agents board relocate <url> (beads-setup.md#history)')
     else:
         remote, url = 'origin', normalized_remote(args.url or project_remote())
     known = remote in remotes and remote_branches(remote) > 0  # the remote already holds this board
@@ -7930,10 +7965,10 @@ def fresh_join(url: str) -> None:
         database = re.sub(r'[^a-z0-9]+', '_', Path(url.rstrip('/')).stem.lower()).strip('_') or 'board'
         bd_checked('init', '--server', '--stealth', '--remote', url, '--prefix', database, '--skip-hooks', '--skip-agents', stdin='')
         if not remote_branches('origin'):  # bd starts an empty board when the repository holds none
-            raise BoardError(f"no board data at {url}: name the board's address: agents board join <url>")
+            raise fault(f"no board data at {url}: name the board's address: agents board join <url>")
         moved = config_value(MOVED)
         if moved:
-            raise BoardError(f'the board at {url} moved to {moved}: agents board join {moved}')
+            raise fault(f'the board at {url} moved to {moved}: agents board join {moved}')
         set_config((*LOCAL_CONFIG, *SERVER_CONFIG, *SHARED_CONFIG))
         bd_checked('dolt', 'commit', '-m', 'board config')
         write_mark(root / '.beads', 'origin')
@@ -7953,7 +7988,7 @@ def join(args) -> int:
     """Safe to repeat: an existing board stays as it is, unless it carries a moved note: then it rejoins."""
     toplevel = subprocess.run(['git', 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
     if toplevel.returncode != 0:
-        raise BoardError('run agents board join inside the project repository')
+        raise fault('run agents board join inside the project repository')
     os.chdir(toplevel.stdout.strip())
     beads = beads_dir()
     if beads is not None:
@@ -8012,31 +8047,31 @@ def move_board(args) -> int:
     note goes out before the flatten and is removed from the local copy first: it travels with the data and would say the
     new board moved too."""
     if shared is None:
-        raise BoardError('agents board relocate moves a shared board; this one is not shared')
+        raise fault('agents board relocate moves a shared board; this one is not shared')
     if not may_attend():
-        raise BoardError("only lead and solo sessions, or a person's terminal, move a board")
+        raise refuse('db.owner', "only lead and solo sessions, or a person's terminal, move a board")
     if shared.moved():
-        raise BoardError(moved_refusal(shared.moved()))
+        raise fault(moved_refusal(shared.moved()))
     url = normalized_remote(args.url)
     os.chdir(shared.root)
     old = bd_remotes().get(shared.remote)
     if old == url:
-        raise BoardError(f'this board already syncs with {url}')
+        raise bad_input(f'this board already syncs with {url}')
     refs = readable_remote(url)
     if refs and 'refs/dolt/data' in refs:
-        raise BoardError(f'{url} already holds board data: name a fresh repository')
+        raise fault(f'{url} already holds board data: name a fresh repository')
     with shared.hold_wait():
         bd('dolt', 'commit', '-m', 'before the move')  # nothing to commit when the wait just sent
         sent = bd('sync', '--remote', shared.remote)
         if sent.returncode != 0:
-            raise BoardError(f'the sync before the move failed, nothing moved: {last_line(sent.stderr + sent.stdout)}')
+            raise fault(f'the sync before the move failed, nothing moved: {last_line(sent.stderr + sent.stdout)}')
         bd_checked('config', 'set', MOVED, url)
         bd_checked('dolt', 'commit', '-m', f'board moved to {url}')
         sent = bd('sync', '--remote', shared.remote)
         if sent.returncode != 0:
             bd('config', 'unset', MOVED)
             bd('dolt', 'commit', '-m', 'board relocate abandoned')
-            raise BoardError(f'sending the moved note failed, nothing moved: {last_line(sent.stderr + sent.stdout)}')
+            raise fault(f'sending the moved note failed, nothing moved: {last_line(sent.stderr + sent.stdout)}')
         bd_checked('config', 'unset', MOVED)
         bd_checked('dolt', 'commit', '-m', 'board moved: the note stays on the old board')
         bd_checked('flatten', '--force')
@@ -8044,7 +8079,7 @@ def move_board(args) -> int:
         bd_checked('dolt', 'remote', 'add', shared.remote, url, '--allow-git-origin')
         pushed = bd('dolt', 'push', '--remote', shared.remote)
         if pushed.returncode != 0:
-            raise BoardError(f'the old board says it moved to {url}, but the push there failed: {last_line(pushed.stderr + pushed.stdout)}. '
+            raise fault(f'the old board says it moved to {url}, but the push there failed: {last_line(pushed.stderr + pushed.stdout)}. '
                              f'Fix the access, then: {raw_form("dolt push --remote " + shared.remote)}')
         for name in ('pulled', 'unsent'):
             (shared.dir / name).unlink(missing_ok=True)
@@ -8061,17 +8096,17 @@ def attended_issues(board: Board | None, args, command: str) -> list[dict]:
     """The checks route and send share: a shared board, an attended session, a person, known ids (`board` holds the named items; None
     checks the rest before the read)."""
     if shared is None:
-        raise BoardError(f'board {command}: this board is not shared, so no queues')
+        raise fault(f'board {command}: this board is not shared, so no queues')
     if not may_attend():
-        raise BoardError(f"only lead and solo sessions, or a person's terminal, {command} items; ask your lead")
+        raise refuse('queue.attended', f"only lead and solo sessions, or a person's terminal, {command} items; ask your lead")
     if not PERSON_NAME.fullmatch(args.person):
-        raise BoardError(f'{args.person!r} does not fit a label')
+        raise bad_input(f'{args.person!r} does not fit a label')
     if board is None:
         return []
     found = {issue['id']: issue for issue in board.issues}
     missing = [item_id for item_id in args.ids if item_id not in found]
     if missing:
-        raise BoardError(f"unknown: {', '.join(missing)}")
+        raise bad_input(f"unknown: {', '.join(missing)}")
     return [found[item_id] for item_id in args.ids]
 
 
@@ -8097,7 +8132,7 @@ def send(board: Board, args) -> int:
     for issue in issues:
         inherited = sorted({queue for parent in board.parents.get(issue['id'], []) for queue in board.queues(parent)})
         if inherited:
-            raise BoardError(f"{issue['id']} takes its queue from its parent ({', '.join(inherited)}), so it can't sit in an inbox: "
+            raise refuse('queue.top-level', f"{issue['id']} takes its queue from its parent ({', '.join(inherited)}), so it can't sit in an inbox: "
                              f"agents board route {args.person} {issue['id']}, or remove the parent link first")
     for issue in issues:
         labels = issue.get('labels') or []
@@ -8115,7 +8150,7 @@ def read_text_arg(path: str) -> str:
     try:
         return sys.stdin.read() if path == '-' else Path(path).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
-        raise BoardError(f'cannot read {path}: {error}') from None
+        raise bad_input(f'cannot read {path}: {error}') from None
 
 
 def flag_node(args) -> tuple[dict, list[dict]]:
@@ -8124,7 +8159,7 @@ def flag_node(args) -> tuple[dict, list[dict]]:
     none of its labels, so they are copied here as `create --parent` did), deps ({target, type}: this item depends on target)."""
     title = args.title or args.positional_title
     if not title or (args.title and args.positional_title):
-        raise BoardError('name the item once: agents board create "<title>" or --title <title>')
+        raise bad_input('name the item once: agents board create "<title>" or --title <title>')
     node: dict = {'key': 'item', 'title': title, 'type': args.type or 'task'}
     if args.priority is not None:
         node['priority'] = args.priority
@@ -8135,7 +8170,7 @@ def flag_node(args) -> tuple[dict, list[dict]]:
     if args.parent:
         parents = bd_show([args.parent], comments=False)
         if not parents:
-            raise BoardError(f'unknown parent {args.parent}')
+            raise bad_input(f'unknown parent {args.parent}')
         node['parent_id'] = parents[0]['id']
         labels += inherited_labels(parents[0], labels)
     if labels:
@@ -8148,9 +8183,9 @@ def flag_node(args) -> tuple[dict, list[dict]]:
         kind, sep, target = dep.partition(':')
         kind, target = (kind, target) if sep else ('waits-on', dep)
         if not target:
-            raise BoardError(f'--deps takes type:ID, got {dep}')
+            raise bad_input(f'--deps takes type:ID, got {dep}')
         if kind == 'parent-child':
-            raise BoardError('a parent is --parent <id>')
+            raise bad_input('a parent is --parent <id>')
         if kind == 'waits-on':
             waits_on.append({'on': target})
         else:
@@ -8169,19 +8204,19 @@ def load_plan(path: str) -> dict:
     try:
         plan = json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, UnicodeDecodeError, ValueError) as error:
-        raise BoardError(f'cannot read the plan {path}: {error}') from None
+        raise bad_input(f'cannot read the plan {path}: {error}') from None
     plan = validate_plan(plan, path, GIVEN_NODE_KEYS)
     for node in plan['nodes']:
         if missing := [wait['on'] for wait in node.get('waits_on', []) if 'for' not in wait]:
-            raise BoardError(f"{path}: node {node['key']} waits on {', '.join(missing)} without saying for what: waits_on is [{{\"on\", \"for\"}}]")
+            raise refuse('blocks.for', f"{path}: node {node['key']} waits on {', '.join(missing)} without saying for what: waits_on is [{{\"on\", \"for\"}}]")
     return plan
 
 
 def require_person_on_shared_board(target: str, verb: str) -> None:
     if shared is None:
-        raise BoardError(f'agents board {verb} names another person on a shared board; this board is not shared')
+        raise fault(f'agents board {verb} names another person on a shared board; this board is not shared')
     if not PERSON_NAME.fullmatch(target):
-        raise BoardError(f'name one person: agents board {verb} <person>')
+        raise bad_input(f'name one person: agents board {verb} <person>')
 
 
 def for_person(plan: dict, target: str) -> None:
@@ -8190,13 +8225,13 @@ def for_person(plan: dict, target: str) -> None:
     require_person_on_shared_board(target, 'create --for')
     me = person()
     if not me:
-        raise BoardError(PERSON_HELP)
+        raise bad_input(PERSON_HELP)
     children = {edge.get('from_key') for edge in plan.get('edges') or [] if isinstance(edge, dict) and edge.get('type') == 'parent-child'}
     for node in plan['nodes']:
         if node.get('parent') or node.get('parent_key') or node.get('parent_id') or node.get('key') in children:
             continue
         if any(label.startswith((QUEUE_PREFIX, FOR_PREFIX)) for label in node.get('labels') or []):
-            raise BoardError(f"{node.get('key')}: --for sets the queue and for: itself: drop those labels")
+            raise bad_input(f"{node.get('key')}: --for sets the queue and for: itself: drop those labels")
         node['labels'] = [*(node.get('labels') or []), f'{FOR_PREFIX}{target}', f'{QUEUE_PREFIX}{me}']
 
 
@@ -8213,9 +8248,9 @@ def create_command(args) -> int:
                                                                     args.priority, args.description_file, args.design_file,
                                                                     args.acceptance_file, args.deps, args.found_in, args.no_commit, args.look, args.view))
     if args.for_ and args.parent:
-        raise BoardError('agents board create --for files a top-level item: drop --parent (a child takes its parent\'s queue)')
+        raise bad_input('agents board create --for files a top-level item: drop --parent (a child takes its parent\'s queue)')
     if args.graph and flags_used:
-        raise BoardError('--graph takes the whole plan: put the node fields in it (only --for and --holds go beside it)')
+        raise bad_input('--graph takes the whole plan: put the node fields in it (only --for and --holds go beside it)')
     if args.graph:
         plan = load_plan(args.graph)
     else:
@@ -8225,7 +8260,7 @@ def create_command(args) -> int:
     holds_value = ','.join(args.holds) if args.holds else None
     decides = 'decision' in types.values()
     if holds_value is not None and not decides:
-        raise BoardError('--holds goes with --type decision: only a question or ruling holds items up')
+        raise bad_input('--holds goes with --type decision: only a question or ruling holds items up')
     named = parse_holds(holds_value) if holds_value is not None else []
     _, waits, given = create_plan(plan, None, 'create', named, dry_run=True, for_=args.for_)  # every rule before anything is created
     if decides:
@@ -8780,7 +8815,7 @@ def run_command(argv: list[str]) -> int:
             settled = True
         chosen = getattr(args, 'queue', None)
         if chosen and shared is None:
-            raise BoardError('--queue: this board is not shared, so no queues (agents board share shares it)')
+            raise fault('--queue: this board is not shared, so no queues (agents board share shares it)')
         set_view(board, chosen)
         if getattr(args, 'json', False) and args.run in JSON_VIEWS:
             # Unbudgeted, every row (related keeps --limit per list); no capacity line after it.

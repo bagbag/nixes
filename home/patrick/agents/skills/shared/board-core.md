@@ -152,7 +152,7 @@ On a shared board (`.beads/board-shared.json` exists):
 |---|---|
 | `open` | A question: unanswered. It can wait and be waited on. |
 | `decided` | Answered, release pending. A wait on it stays unmet. |
-| `in_force` (shown "in force") | Binding. The open items it changes wait on it until a `plan` session plans it and closes it. It waits only for its own planning: a live decision or a human gate. |
+| `in_force` (shown "in force") | Binding. The open items it changes wait on it until a `plan` session plans it and closes it. It waits only for its own planning: a live decision, an in-force ruling until that is planned and closed, or a human gate. |
 | closed | `planned` (carried into work), `superseded` (a later ruling replaces it) or `dropped` (never ruled). A reversal is a revision record (`agents board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). A wait on a question is met when it closes. |
 
 - Withdraw a question the user drops with

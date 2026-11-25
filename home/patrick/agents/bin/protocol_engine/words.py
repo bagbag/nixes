@@ -504,7 +504,19 @@ def record_row(q: dict, note: str | None, prior: str | None = None) -> str:
 def waits_on_deferred(premise: str, reason: str, kind: str) -> str:
     """Why a question whose premise is deferred is deferred with it: `kind` is how the premise is deferred (r8-q31, r9-q40):
     `outside` waits for a result, `person` was deferred by the person's words, `chain` waits on a question that is."""
-    return f"waits on {premise}, which " + {'outside': f'waits for {reason}', 'person': f'was deferred: {reason}', 'chain': reason}[kind]
+    return f"waits on {premise}, which " + {'outside': f'waits for {reason}', 'person': f'was deferred: {reason}', 'chain': reason, 'premise': reason}[kind]
+
+
+def premise_open(premises: list[str]) -> str:
+    """Why Record defers an away answer (nixes-9cbib): a ruling comes into force only on settled premises."""
+    return (f"rests on {', '.join(premises)}, not settled yet: an away answer comes into force only on settled premises; "
+            'it returns once they are')
+
+
+def proposed_answer(q: dict, fields: dict) -> str:
+    """The away answer a deferral keeps on the item, for the round that takes the question up again."""
+    said = ' '.join(str(fields.get(key) or '').strip() for key in ('decision', 'rationale') if str(fields.get(key) or '').strip())
+    return f"Proposed answer (away, not in force): {q.get('answer')}" + (f"\n{said}" if said else '')
 
 
 def record_deferred(qid: str, found: dict) -> str:

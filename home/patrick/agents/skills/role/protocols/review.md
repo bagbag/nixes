@@ -71,7 +71,8 @@ steps 3-7.
    [hidden-and-costly](../../shared/acceptance.md#review-policy) path stays
    unsettled: comment your findings and evidence, then
    `agents board unclaim <id> --deep-review "<the path>"`, which marks the CR under your
-   hold. The deep review's own `handover` and an `unclaim` without `--resume` clear the mark; `--resume` keeps it.
+   hold. Only the deep reviewer's pass (`handover`) clears the mark; `unclaim`, `return` and the author's
+   `handover` of the repair keep it, so the repair goes back to the deep reviewer.
    Output: `passed <cr> to <status>`, `returned <cr>`, `question <id>`,
    `escalated <id>`, plus the new ids for a filed idea.
 

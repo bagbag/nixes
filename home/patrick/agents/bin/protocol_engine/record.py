@@ -217,6 +217,44 @@ def inherited_blocks(ctx: Context, q: dict) -> list[str]:
             *(f'dep add {item} {b} blocks' for b in blockers if b in open_items and frozenset((item, b)) not in linked)]
 
 
+def settled_blockers(ctx: Context, q: dict) -> list[str]:
+    """The premises a rule question's record inherits from the items it settles (inherited_blocks' blockers): what those items wait on."""
+    settled = board_keys(q.get('settles'))
+    if not settled:
+        return []
+    rows = ctx.board.json('show', *settled, '--json', '--field', 'dependencies')
+    return sorted({dep['depends_on_id'] for row in rows.values() for dep in (row or {}).get('dependencies') or []
+                   if dep.get('type') == 'blocks' and dep.get('issue_id') in settled and dep['depends_on_id'] not in settled
+                   and dep['depends_on_id'] != q['board'] and not dep['depends_on_id'].startswith('external:')})
+
+
+def premise_first(ctx: Context, todo: list[dict]) -> tuple[list[dict], dict[str, list[str]]]:
+    """Record's order (nixes-9cbib): an away answer comes after the questions of this Record its premises name, in-round (`waitsOn`)
+    or inherited (a blocker of an item it settles that is another question's item or settled item), so a premise is in force, or
+    its item closed, before the record that rests on it; otherwise the listed order. Returns the order and each away answer's
+    inherited premises."""
+    inherited = {q['id']: settled_blockers(ctx, q) for q in todo if q['origin'] == AWAY} if ctx.board else {}
+    ids = {q['id'] for q in todo}
+
+    def premises(q: dict) -> set[str]:
+        board = set(inherited.get(q['id'], []))
+        return {p['id'] for p in todo if p is not q and (p['id'] in (q.get('waitsOn') or []) or
+                                                          (p['board'] in board or board & set(board_keys(p.get('settles')))))} & ids if q['id'] in inherited else set()
+
+    order, left = [], list(todo)
+    while left:
+        ready = next((q for q in left if not premises(q) - {o['id'] for o in order}), left[0])  # a circle keeps the listed order
+        order.append(ready)
+        left.remove(ready)
+    return order, inherited
+
+
+def open_premises(ctx: Context, inherited: list[str]) -> list[str]:
+    """An away answer's inherited premises open outside in force now: `ruling record --unratified` refuses its record
+    (status.release-holds), so Record defers it."""
+    return [rid for rid, status in statuses(ctx, inherited).items() if status not in ('closed', 'in_force')] if inherited else []
+
+
 def link_record(ctx: Context, q: dict) -> None:
     """Relates the question's item to its `relate` hits and gives it the inherited blocks; retried on a rerun until it succeeded once
     (a pair already linked is left). bd keeps one edge per pair: a blocks link wins over a relate. The replaced records are not here:
@@ -263,7 +301,7 @@ def deferred_text(ctx: Context, q: dict, found: dict) -> str:
     """What a deferred question's new board item carries: the question with its parts, and why it was deferred."""
     parts = '\n\n'.join(words.part_block(name, text) for name, text in question_parts(ctx, q).items())
     return (f"## Question\n{q['text']}\n\n{parts}\n\nDeferred in round {ctx.round['id']}: {found['reason']}"
-            + (f" (until {found['until']})" if found['until'] else '') + '\n')
+            + (f" (until {found['until']})" if found['until'] else '') + '\n' + (f"\n{found['proposed']}\n" if found.get('proposed') else ''))
 
 
 def file_deferral(ctx: Context, q: dict, found: dict, folder: Path) -> None:
@@ -359,7 +397,12 @@ def record_accept(ctx: Context, report: dict) -> str:
     folder = Path(ctx.round['records']) if ctx.round.get('records') else ctx.store.dir / 'records'
     folder.mkdir(parents=True, exist_ok=True)
     errors = []
+    todo, inherited = premise_first(ctx, todo)
     for q in todo:
+        if q['id'] in inherited and (unsettled := open_premises(ctx, inherited[q['id']])):
+            found[q['id']] = {'reason': words.premise_open(unsettled), 'until': None, 'kind': 'premise',
+                              'proposed': words.proposed_answer(q, records[q['id']])}  # deferred below, its answer kept on the item
+            continue
         path = folder / f"{ctx.round['id']}-{q['id']}.md"
         write_record(q, path, record_file(q, records[q['id']], None if ctx.board else ctx.round.get('topic')))
         q['recordFile'] = str(path)

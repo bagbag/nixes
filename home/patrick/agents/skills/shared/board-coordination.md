@@ -65,7 +65,10 @@ milestones, recorded rulings and deferrals. The board model is
 - At decision time, write the record with `agents board ruling record <id> <file>`:
   it replaces the packet and sets status `decided`; an autopilot ruling or a
   standing two-way default uses `--unratified`, which releases it and files a
-  related Confirm-or-revise question. `--replaces <old>[,<old>]` links each
+  related Confirm-or-revise question. Like `ruling release`, it is refused while
+  the ruling waits on an open record not in force or a live record revises it:
+  answer that premise first (the round engine defers such an away answer,
+  keeping it as the proposed answer). `--replaces <old>[,<old>]` links each
   ruling it replaces, decided, released or closed after planning; each is
   superseded when the new ruling comes into force: at its release, or at once
   with `--unratified`. Rerun it after a stop; `agents board ruling supersede <old>

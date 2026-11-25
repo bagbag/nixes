@@ -21,7 +21,7 @@ Who holds it is the holder field, not a status; the model's tables print from
 - **Metadata:** `look` (`before`: lands on the user's Accept; `after`: lands
   after agent review), `view` (`code`: the user reads the diff; `result`: walked through the
   outcome), `deep_review` (the path a review
-  escalated, set by `unclaim --deep-review`, cleared by the deep-review's handover or unclaim), `base` (target or
+  escalated, set by `unclaim --deep-review`, cleared only by the deep reviewer's pass), `base` (target or
   CR), `base_sha` (fork point, set at creation and after every rebase),
   `setup_sha`, `check` and `review` = {tip, baseTip, result, at}.
 - **Settings** (project bd config): `target`, `setup`, `checks`, `look`,
