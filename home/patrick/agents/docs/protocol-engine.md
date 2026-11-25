@@ -173,12 +173,14 @@ A round:
   items stay claimed by the round through Record into the release (a deferred
   or removed rule question releases them as any other claim). Record writes one
   record per rule (its own `board`, else a new decision item) and refuses one
-  whose `rationale`/`decision` names no settled id; in the same `bd batch` as
-  the `relate` links the record inherits the settled items' `blocks` links both
-  ways (the open items a settled item blocks wait on the record, the open items
-  it waits on block the record; links among the settled items, to the record or
-  to an item it is linked to already are left, and a blocks link wins over a
-  relate), because a released ruling blocks what it changes until planned. The
+  whose `rationale`/`decision` names no settled id. It claims the record (not again
+  when this session holds it already), records it, then writes its `relate` links
+  and the settled items' waits both ways (the open items a settled item blocks wait
+  on the record, the record waits on the open items it waits on; links among the
+  settled items, to the record or to an item it is linked to already are left, and
+  a wait wins over a relate), because a released ruling blocks what it changes until
+  planned. The waits come after the record: a recorded ruling is no longer open, so
+  its holder's own wait does not hand it back (`board wait`). The
   release pre-fills, for each settled board item of a rule record in its set
   (this session's state), the answers row `answered: close` and the close by
   that record, so `agents board ruling release --closes` closes it; one still open afterwards
@@ -333,7 +335,7 @@ A round:
   `start release` (a typed `/release-round` included) are refused under autopilot,
   naming the switch to solo, as is a release or a round without a board already open
   when the role changed. Settled items of an away record are unclaimed, not held for a
-  release.
+  release: they close when it is recorded, a settled question as `superseded`.
 - Stage and any update refuse a `board` id that is no decision: the question goes
   in as a draft and records its own item. They also refuse a second question on a
   `board` id another question of the round holds, since Record would write both

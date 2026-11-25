@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from .base import CAP_CHOICES, CHECK_CAP, PASSES, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
 from . import schema, words
@@ -193,6 +193,14 @@ DEFERRABLE = ('draft', 'held', 'ready', 'asked', 'answered')
 DEFER_UNTIL = re.compile(r'\d{4}-\d{2}-\d{2}')
 
 
+def defer_day(value: object) -> bool:
+    """`agents board defer --until`'s form: a YYYY-MM-DD day that exists on the calendar."""
+    try:
+        return isinstance(value, str) and bool(DEFER_UNTIL.fullmatch(value)) and bool(date.fromisoformat(value))
+    except ValueError:
+        return False
+
+
 def defer_round(ctx: Context, report: dict) -> str:
     """The person's deferral of a question (r9-q40): it and every question waiting on it, through chains, leave the round with
     status `deferred`, the person's words as the reason; an answer already given to one goes (its premise is deferred). A batch
@@ -205,7 +213,7 @@ def defer_round(ctx: Context, report: dict) -> str:
         fail('answer the cap question first')
     schema.require_needs(schema.Defer, report, 'question', 'quote')
     qid, quote, until = report['question'], report['quote'], report.get('until')
-    if until is not None and not (isinstance(until, str) and DEFER_UNTIL.fullmatch(until)):
+    if until is not None and not defer_day(until):
         fail('defer: `until` is a date (2026-12-01); left out for no date')
     quote_check(ctx, 'defer', quote)
     target = by_id(ctx, qid)

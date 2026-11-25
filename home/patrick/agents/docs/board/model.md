@@ -77,14 +77,14 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | handover --no-agent-review | change request | open | passed | you | - | agent | in-work, items-closed, look-before, not-open-for-review | - |
 | handover (reviewer passes) | change request | in_review | passed | you | - | agent | items-closed | - |
 | send to review | change request | passed | in_review | * | - | holding / deciding / user | unheld-or-yours | - |
-| return | change request | in_review | open | * | - | agent+holder / deciding / user | held-by-you | - |
+| return | change request | in_review | open | * | - | agent+holder | held-by-you | - |
 | return | change request | passed | open | * | - | deciding / user | unheld-or-yours | - |
 | return --ruling | change request | in_review | open | you | - | planner | - | - |
 | landing | change request | open, in_review, passed | closed | * | - | anyone | - | landed |
 | cr reject | change request | open, in_review, passed, deferred | closed | * | - | attended / user | reason, items-closed, no-waiters | dropped |
 | base rejected | change request | open, in_review, passed | open | * | - | anyone | - | - |
 | defer | change request | open | deferred | * | - | planner+holder / deciding / user | no-hung-waiters | - |
-| undefer | change request | deferred | open | - | - | deferrer | - | - |
+| undefer | change request | deferred | open | - | - | deferrer | no-deferred-target | - |
 | claim | task | open | = | - | you | agent | - | - |
 | take | task | open | = | * | you | agent+holder / agent+deciding+gone | - | - |
 | unclaim | task | open | = | * | - | holder / user / deciding+gone | - | - |
@@ -93,9 +93,9 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | close | item | open | closed | * | - | holding / user / deciding+unheld / deciding+gone / planner+unheld | reason, no-waiters | done, dropped |
 | reopen | item | closed | open | * | - | holding / user / deciding+unheld / deciding+gone / planner+unheld | open-parent, no-dropped-target | - |
 | defer | task | open | deferred | * | - | planner+holder / deciding / user | no-hung-waiters | - |
-| undefer | task | deferred | open | - | - | deferrer | - | - |
+| undefer | task | deferred | open | - | - | deferrer | no-deferred-target | - |
 | defer | decision | open | deferred | * | - | planner+holder / deciding / user | no-hung-waiters | - |
-| undefer | decision | deferred | open | - | - | deferrer | - | - |
+| undefer | decision | deferred | open | - | - | deferrer | no-deferred-target | - |
 | claim | decision | open, decided | = | - | you | agent | - | - |
 | claim | decision | in_force | = | - | you | planner | - | - |
 | take | decision | open, decided, in_force | = | * | you | agent+holder / agent+deciding+gone | - | - |
@@ -131,7 +131,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | attended | a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol) |
 <!-- /model-tables -->
 
-Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `no-waiters` (a close as dropped leaves no open or deferred record waiting on it: unlink the wait, wait on the keeper, or close them in the same call), `not-superseded` (a superseded ruling is put back by a revision record), `no-dropped-target` (a reopened record waits on nothing closed dropped), `settled-premises` (a record moves into `in_force` only when nothing it waits on is open outside `in_force` and no live record revises it, unless the same call brings them into force: `status.release-holds`), `no-hung-waiters` (a deferral leaves no live record waiting on it: `blocks.target`), `open-parent` (a reopened item's change request is open), `in-work` (an author hands over work in hand: hold `work`, not a planner's hold), `unheld-or-yours` (sending a passed CR to review or returning it waits while another session holds it, a refresh), `held-by-you` (an in-review CR is returned by the reviewer holding it). Each guard names its Write-rules cell (`GUARDS`).
+Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `no-waiters` (a close as dropped leaves no open or deferred record waiting on it: unlink the wait, wait on the keeper, or close them in the same call), `not-superseded` (a superseded ruling is put back by a revision record), `no-dropped-target` (a reopened record waits on nothing closed dropped), `settled-premises` (a record moves into `in_force` only when nothing it waits on is open outside `in_force` and no live record revises it, unless the same call brings them into force: `status.release-holds`), `no-hung-waiters` (a deferral leaves no live record waiting on it: `blocks.target`), `no-deferred-target` (an undeferral leaves nothing it reopens waiting on a deferred record, unless the same call undefers that too: `blocks.target`), `open-parent` (a reopened item's change request is open), `in-work` (an author hands over work in hand: hold `work`, not a planner's hold), `unheld-or-yours` (sending a passed CR to review or returning it waits while another session holds it, a refresh), `held-by-you` (an in-review CR is returned by the reviewer holding it). Each guard names its Write-rules cell (`GUARDS`).
 
 ## Authority
 
@@ -172,7 +172,8 @@ A wait is met only by a delivering close, so nothing closes dropped under an ope
 ## Readiness
 
 - CR: unheld, its base allows it, every CR-scope wait met, and either an open item is ready or no item is open (its next step is handover).
-- Task, question: unheld, waits met. A CR waits as a whole only for CR-scope waits; what an item waits on holds the item.
+- Task, question: unheld, waits met; outside any CR it cannot stack, so a wait on another CR's item holds it until that CR lands.
+- A CR waits as a whole only for CR-scope waits; what an item waits on holds the item. A CR stacks on at most one base: its own (a CR-scope wait's) when it has one, else its items' only candidate; two CR-scope bases hold the CR, and an item's other base holds that item.
 - Pulls: `plan` (rulings in force, tasks, a CR marked `plan_first`: rejected base, migrated loose work), `implement` (a ready open CR), `review` (an `in_review` CR, refresh work). A bare `claim` takes what the session's role and pulls route; a claim by id checks no pull. Deciding sessions also take questions, `passed` CRs waiting for Accept and ready milestones. Inside a session, dispatch may pick a worker agent by an item's kind label.
 - Claim order: priority P0 first, then planning (rulings in force, a `plan_first` CR, no-commit tasks), milestone work, review and refresh, Accept, the rest; within a tier priority, then unlock rank (board-coordination).
 
@@ -180,7 +181,7 @@ A wait is met only by a delivering close, so nothing closes dropped under an ope
 
 - `deferred` = set aside, blocked by nothing, off the queue: someday or maybe, no condition. Only an explicit `undefer` reopens it.
 - Applies to CRs, tasks and questions. To set one item aside, move it into its own CR first.
-- A condition on another record or event is a wait, not a deferral: `defer` takes no condition. The round engine follows it: an answer resting on an open premise waits on it (nixes-rzfij), it is never deferred. `defer` refuses an item that live items wait on (they would hang), naming the fix.
+- A condition on another record or event is a wait, not a deferral: `defer` takes no condition. The round engine follows it: an answer resting on an open premise waits on it (nixes-rzfij), it is never deferred. `defer` refuses an item that live items wait on (they would hang), naming the fix. `undefer` refuses a record that would wait on a deferred one again; undefer both in one call, or unlink the wait.
 - A deferral records who deferred (`deferred_by`: `user` for the user, a lead or solo session acting for them, or a migrated deferral that records none; else the deferring session's actor, autopilot's included) and an optional `revisit` day (a board field; not bd's `defer_until`, so bd never wakes it). Due is derived at read (revisit <= today): a due user deferral shows in the user's view, a due session deferral as plan work. It stays deferred until undeferred: parked work never starts unasked. Only the deferrer's side undefers. `defer --until` sets the day.
 
 ## Relations and fields
@@ -209,13 +210,14 @@ An explicit `actor` argument is a non-empty actor or None (derive it); `''` is r
 | | `parent-child.one-parent` | A record has exactly one parent (Types: an item of exactly one CR). | `edge_rules` | runs | runs |
 | | `parent-child.item-create` | Entering a CR is a write to its items (`ITEM_CREATE`): the holder, the user, a planner or a deciding session, held or not (nixes-308o2, nixes-0an9j). A CR the same plan creates is its creator's to fill. | `edge_rules` | runs | runs |
 | | `parent-child.leave` | Only an open record changes its parent; leaving a CR needs `ITEM_WRITE` on that CR, and the item must be unheld (`parent_move_refusal`). | `edge_rules` (`parent_move_refusal`) | n/a | runs |
+| | `parent-child.enter` | A task enters a CR only open and unheld: an item has no deferral or hold of its own (Deferral, Holding), so a deferred or held task is refused, naming `undefer` or `unclaim`, after the hold rule (another session's hold is refused as `held-record.write`). | `edge_rules` | n/a | runs |
 | | `parent-child.cr-stays` | A CR keeps its parent and moves only into a milestone. | `edge_rules` (`parent_move_refusal`) | n/a | runs |
 | | `parent-child.queue` | On a shared board, only a lead, solo or person moves an item into another queue by its parent. | `edge_rules` (`parent_move_refusal`) | n/a | runs |
 | | `parent-child.no-commit` | Entering a CR clears `no_commit` in the same write (nixes-x62oy). | `write_edges` | n/a | runs |
 | | `parent-child.owner` | No other writer: `write_fields` refuses `--parent`. | `write_fields` | n/a | runs |
 | | `parent-child.refusal-text` | A refusal by `item-create` names routes that work: a no-commit task, a new CR with its items in one `create --graph`, or a comment (nixes-psxz8). | `edge_rules` | runs | runs |
 | `blocks` (a wait) | `blocks.writers` | A wait is written only as a wait: `wait`, `waits_on` and `--deps`, `--holds`, `gate create`, and the ruling verbs. `link` refuses one, and bd's link words are refused, naming `wait`. | `edge_rules` (`refuse_old_link`) | runs | runs |
-| | `blocks.target` | Nothing waits on a deferred record, on a record in a deferred CR, or on a record closed dropped, a question excepted (nixes-ze5lx). Held when a wait is written, when a waited-on record moves into a deferred CR (`move`), and when a record is deferred (`move`'s guard `no-hung-waiters` on the defer rows, every id before the first write: `deferred_waiters`, a question is refused only when an in-work unit would hang on it, any other record when a live record waits on it). | `edge_rules` (`wait_target_refusal`), `move` (`deferred_waiters`) | runs | runs |
+| | `blocks.target` | Nothing waits on a deferred record, on a record in a deferred CR, or on a record closed dropped, a question excepted (nixes-ze5lx). Held when a wait is written, when a waited-on record moves into a deferred CR (`move`), when a record is deferred (`move`'s guard `no-hung-waiters` on the defer rows, every id before the first write: `deferred_waiters`, a question is refused only when an in-work unit would hang on it, any other record when a live record waits on it), and when a record is undeferred (guard `no-deferred-target` on the undefer rows: it, or an open item of a CR, waits on a deferred record or an item of a deferred CR that the same call does not undefer: `deferred_targets`). A plan's new record sits in the CR the plan gives it. | `edge_rules` (`wait_target_refusal`), `move` (`deferred_waiters`, `deferred_targets`) | runs | runs |
 | | `blocks.external` | An `external:` wait target is refused at every writer: it never blocks (Operation notes, Beads features the board avoids), and upstream waits use a human gate (nixes-7oqkc). | `edge_rules` (`wait_target_refusal`) | runs | runs |
 | | `blocks.waiter` | A milestone waits on nothing. An in-force ruling waits only for its planning: a live decision, another in-force ruling until it is planned and closed (nixes-r0e01), or a human gate. Checked on the wait write; a record coming into force has only in-force waits (`status.release-holds`). | `edge_rules` (`wait_target_refusal`) | runs | runs |
 | | `blocks.cycle` | No cycle in the lifted wait graph (waits between items of different CRs count as waits between the CRs; a plan's new records sit in the CRs it gives them), after any write that changes it: a wait added (`wait`, plan `deps`, `waits_on` and edges, `--holds`, `gate create`, supersede waits) or an item's CR changed (`move`). Checked before the first write. | `edge_rules` (`wait_cycle`) | runs | runs |
@@ -320,7 +322,7 @@ What the code does today where a cell reads `gap Gn`. nixes-fmf56 closed G1-G24;
 | `create` | for | any | queue.{route, attended} |
 | `create` | graph | any | parent-child.{kind-fit, work-needs-cr, open-parent, item-create, refusal-text, one-parent, only-move}, blocks.{writers, target, external, waiter, cycle, for}, queue.{route, attended}, issue_type.types, content.size, labels.form, setting.values, meta.found-in, comments.size |
 | `move` | any | task | parent-child.{kind-fit, item-create, leave, open-parent, cr-stays, queue, no-commit}, blocks.{target, cycle}, held-record.write, actor.none |
-| `move` | any | no-commit | parent-child.{kind-fit, item-create, leave, open-parent, cr-stays, queue, no-commit}, blocks.{target, cycle}, held-record.write, actor.none |
+| `move` | any | no-commit | parent-child.{kind-fit, item-create, enter, leave, open-parent, cr-stays, queue, no-commit}, blocks.{target, cycle}, held-record.write, actor.none |
 | `move` | any | cr | parent-child.{cr-stays, queue, leave, open-parent}, held-record.write, actor.none |
 | `move` | any | decision, gate, milestone | parent-child.{kind-fit, leave}, actor.none |
 | `wait` | same-cr | any | blocks.{writers, target, external, waiter, cycle, hold, for, pair}, held-record.wait, status.row, actor.none, comments.size |
@@ -341,7 +343,7 @@ What the code does today where a cell reads `gap Gn`. nixes-fmf56 closed G1-G24;
 | `close` | conflict | any | blocks.no-dropped-close |
 | `reopen` | any | task, decision, gate, milestone | status.{row, open-parent}, blocks.reopen, supersedes.row, meta.move-keys, actor.none |
 | `defer` | any | task, cr, decision | status.row, blocks.target, meta.move-keys, comments.size, actor.none |
-| `undefer` | any | task, cr, decision | status.row, meta.move-keys, actor.none |
+| `undefer` | any | task, cr, decision | status.row, blocks.target, meta.move-keys, actor.none |
 | `claim` | any | any | status.row, assignee.{row, ready, work-needs-cr}, status.who-planner, meta.{holder-keys, review, plan-first, resume, forced}, meta.allowlist, actor.none |
 | `claim` | agreed | any | comments.size |
 | `take` | any | any | status.row, assignee.{row, stale-evidence, work-needs-cr}, queue.claim, meta.{holder-keys, review}, actor.none |
@@ -383,7 +385,7 @@ What the code does today where a cell reads `gap Gn`. nixes-fmf56 closed G1-G24;
 | `command start` | any | cr | status.row, meta.base, actor.none |
 | `bd` | any | any | raw.door |
 
-`command start` is `settle_landed`, which runs before every `CR_AWARE` command, `health`, `queue`, `position`, `console`, `check` and `mine` included: it finishes a landing (`finish_landing`: the landing move and the stacked CRs' `base`). `Shared.before` and `_sync-wait` are the other writers that are not parser verbs. `field export`, `field discard` and `ruling check-replaces` have no cells: they write no record (`check-replaces` reads, but it is not in `READS`).
+`command start` is `settle_landed`, which runs before every `CR_AWARE` command, `health`, `queue`, `position`, `console`, `check` and `mine` included: it finishes a landing (`finish_landing`: the landing move and the stacked CRs' `base`), not on a board without the current model marker (`model_value`), where reads stay open and write nothing. `Shared.before` and `_sync-wait` are the other writers that are not parser verbs. `field export`, `field discard` and `ruling check-replaces` have no cells: they write no record (`check-replaces` reads, but it is not in `READS`).
 
 ## After the fact (look after)
 

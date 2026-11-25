@@ -194,8 +194,8 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain
     return new
 
 
-def inherited_blocks(ctx: Context, q: dict) -> list[str]:
-    """`bd batch` operations that give a rule question's record the `blocks` links of the items it settles (a released
+def inherited_blocks(ctx: Context, q: dict) -> list[tuple[str, str]]:
+    """(waiter, blocker) pairs that give a rule question's record the waits of the items it settles (a released
     ruling blocks what it changes until planned, so closing the settled items must not unblock their dependents): the
     open items a settled item blocks wait on the record, and the open items a settled item waits on block the record.
     Edges among the settled items, to the record itself or to an item the record is linked to already are left."""
@@ -213,8 +213,8 @@ def inherited_blocks(ctx: Context, q: dict) -> list[str]:
                        and not b.startswith('external:')})
     others = [*waiting, *blockers]
     open_items = {other for other, status in statuses(ctx, others).items() if status != 'closed'} if others else set()
-    return [*(f'dep add {w} {item} blocks' for w in waiting if w in open_items and frozenset((w, item)) not in linked),
-            *(f'dep add {item} {b} blocks' for b in blockers if b in open_items and frozenset((item, b)) not in linked)]
+    return [*((w, item) for w in waiting if w in open_items and frozenset((w, item)) not in linked),
+            *((item, b) for b in blockers if b in open_items and frozenset((item, b)) not in linked)]
 
 
 def settled_blockers(ctx: Context, q: dict) -> list[str]:
@@ -258,13 +258,14 @@ def open_premises(ctx: Context, q: dict, inherited: list[str]) -> list[str]:
 
 
 def link_record(ctx: Context, q: dict) -> None:
-    """Relates the question's item to its `relate` hits and gives it the inherited blocks; retried on a rerun until it succeeded once
-    (a pair already linked is left). bd keeps one edge per pair: a blocks link wins over a relate. The replaced records are not here:
+    """Relates the question's item to its `relate` hits and gives it the inherited waits; retried on a rerun until it succeeded once
+    (a pair already linked is left). It runs after `ruling record`: the record is no longer open then, so its holder's own wait does not
+    hand it back (board wait, r21-q144), and the claim that recorded it still holds (nixes-dl0ru F8). bd keeps one edge per pair: a blocks link wins over a relate. The replaced records are not here:
     `ruling record --replaces` links them."""
     if not q.get('linked'):
         item = q['board']
         blocks = inherited_blocks(ctx, q)
-        taken = {frozenset(op.split()[2:4]) for op in blocks}
+        taken = {frozenset(pair) for pair in blocks}
         relate = [h['id'] for h in q['overlaps'] if h['outcome'] == 'relate' and frozenset((item, h['id'])) not in taken]
         if relate:  # the links already there are read once, only when there is a link to make
             have = {frozenset((dep['issue_id'], dep['depends_on_id'])) for row in ctx.board.json('show', item, '--json', '--field', 'dependencies').values()
@@ -272,8 +273,7 @@ def link_record(ctx: Context, q: dict) -> None:
             relate = [hit for hit in relate if frozenset((item, hit)) not in have]
         for hit in relate:
             ctx.board.checked('link', item, hit, '--type', 'relates-to')
-        for op in blocks:  # `dep add <waiting> <blocker> blocks`: the wait board wait makes
-            _, _, waiting, blocker, _ = op.split()
+        for waiting, blocker in blocks:
             reason = [] if blocker == item else ['--for', f'{item} waits on {blocker} as the items it settles did.']
             ctx.board.checked('wait', waiting, '--on', blocker, *reason)
     q['linked'] = True
@@ -287,10 +287,12 @@ def close_settled_away(ctx: Context, q: dict, item: str) -> None:
     """An away ruling is in force, so the questions it settles close when it is recorded; no release follows, and its reversal
     reopens them (r31-q143). Repeatable: a rerun closes what is left."""
     done = q.setdefault('closedSettled', [])
-    for key in board_keys(q.get('settles')):
-        if key not in done:
-            ctx.board.checked('close', key, '--reason', f'Settled by released away ruling {item}')
-            done.append(key)
+    left = [key for key in board_keys(q.get('settles')) if key not in done]
+    types = ctx.board.json('show', *left, '--json', '--field', 'issue_type') if left else {}
+    for key in left:  # a question another ruling answers closes superseded (model.md Lifecycles), as the attended release closes it
+        outcome = ['--outcome', 'superseded'] if (types.get(key) or {}).get('issue_type') == 'decision' else []
+        ctx.board.checked('close', key, '--reason', f'Settled by released away ruling {item}', *outcome)
+        done.append(key)
 
 
 def move_settled(ctx: Context, item: str, keys: list[str]) -> None:
@@ -457,8 +459,7 @@ def record_accept(ctx: Context, report: dict) -> str:
             continue
         try:
             item = board_item(ctx, q, path)
-            link_record(ctx, q)
-            ctx.board.checked('claim', item)
+            ctx.board.checked('claim', item)  # a rerun's own hold: board claim keeps it ("already held")
             away = q['origin'] == AWAY
             # Every record it replaces is linked; an unratified record is released at once, so it supersedes them now, the released
             # one it revises included; any other record supersedes them at its release (r9-q33).
@@ -470,6 +471,7 @@ def record_accept(ctx: Context, report: dict) -> str:
                 if left or not replaces:  # the record, a link or a close did not happen: the rerun picks up what is left
                     fail(f"`agents board ruling record {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
                 ctx.messages.append(words.record_exited(item, result.returncode, (result.stderr or result.stdout).strip()))  # all closed: only the items waiting on the old ones are not blocked
+            link_record(ctx, q)
             for premise in unsettled:  # a person's answer on an open premise is decided and waits on it: the release rule holds it (nixes-rzfij)
                 ctx.board.checked('wait', item, '--on', premise, '--for', words.PREMISE_FOR)
             if q['origin'] == AWAY:

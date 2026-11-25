@@ -2259,7 +2259,7 @@ def validate_shared_board(root: Path) -> None:
     with patch.object(board, "registrations", lambda: (entries, set())), patch.object(board, "derived_actor", lambda: "auto0001"):
         for command, allowed in (("send to review", True), ("return", True), ("cr reject", False)):
             row = next(m for m in board.MOVES if m.command == command and m.group == board.CR_GROUP and "passed" in m.frm)
-            expect((board.authority_refusal(passed, row, command, "auto0001", board.Board([])) is None) == allowed, "autopilot on a change-request move", command)
+            expect((board.authority_refusal(passed, row.who, command, "auto0001", board.Board([])) is None) == allowed, "autopilot on a change-request move", command)
     # Autopilot leaves a ruling's release, a gate's close and reopen and a milestone's claim, take, close and reopen to the user; lead and solo may.
     for actor in ("auto0001", "lead0001", "solo0001"):
         with patch.object(board, "registrations", lambda: (entries, set())), patch.object(board, "derived_actor", lambda: actor):
@@ -2267,7 +2267,7 @@ def validate_shared_board(root: Path) -> None:
                                                  ("claim", "milestone", "open", "milestone"), ("close", "milestone", "open", "milestone"), ("reopen", "milestone", "closed", "milestone")):
                 row = next(m for m in board.MOVES if m.command == command and m.group == group and status in m.frm)
                 issue = {"id": "t-x", "issue_type": kind, "status": status, "assignee": None, "metadata": {}}
-                expect((board.authority_refusal(issue, row, command, actor, board.Board([])) is None) == (actor != "auto0001"), f"{actor} on {command} of a {group}")
+                expect((board.authority_refusal(issue, row.who, command, actor, board.Board([])) is None) == (actor != "auto0001"), f"{actor} on {command} of a {group}")
 
     # The retry: this one error on a shared board, counted on stderr; never a stopped merge, never unshared.
     def attempts(message, is_shared, code=1):
@@ -2565,14 +2565,18 @@ def validate_board(root: Path) -> None:
             expected = ["list", "show"]
         else:
             expected = ["list"]
-        # A change request whose items wait on a blocker outside the status snapshot reads it once (lifting the edge to its CR).
-        everyone = {issue["id"] for issue in fake.issues}
-        lifting = any(d["type"] == "blocks" and d["depends_on_id"] not in everyone and not d["depends_on_id"].startswith("external:")
-                      for issue in live for d in issue.get("dependencies") or [])
-        if lifting and expected != ["export"] and argv[0] != "show":
+        # A live record waiting on a blocker outside the status snapshot reads the closed items once (lifting the edge to its CR: a change
+        # request's items, and a record outside any CR, which cannot stack, nixes-dl0ru F4), then shows what that list lacks.
+        everyone, snapshot = {issue["id"] for issue in fake.issues}, {issue["id"] for issue in live}
+        outside = {d["depends_on_id"] for issue in live for d in issue.get("dependencies") or []
+                   if d["type"] == "blocks" and d["depends_on_id"] not in snapshot and not d["depends_on_id"].startswith("external:")}
+        if outside and expected not in (["export"], fake.reads()) and argv[0] != "show":  # claim, take and watch: their reads are taken as they are
             collapse = lambda reads: [r for at, r in enumerate(reads) if not (r == "show" and reads[:at].count("show"))]
-            expected = collapse([expected[0], "list", *expected[1:], "show"])  # the closed items in one list, then a show of what it lacks
-            fake_reads = collapse(fake.reads())
+            calls = [args for args, _ in fake.calls if args[0] in ("export", "list", "show") and "--parent" not in args]
+            lists = [at for at, args in enumerate(calls) if args[:3] == ["list", "--status", "closed"]]
+            # the one closed list, read where the first readiness question needs it; the other reads keep their order
+            expected = collapse([*expected, *(["show"] if outside - everyone else [])])
+            fake_reads = collapse([r for at, r in enumerate(fake.reads()) if at not in lists[:1]]) if len(lists) == 1 else fake.reads()
         else:
             fake_reads = fake.reads()
         closed_ids = {issue["id"] for issue in fake.issues if issue["status"] == "closed"}
@@ -5471,6 +5475,25 @@ def validate_board(root: Path) -> None:
             with patch.object(board, "bd_show", show_outside), patch.object(board, "bd_closed", lambda: [closed_child]):
                 if readiness(*lifting)["lw"] != ("implement", ([], ["lb"])):
                     raise ValueError("a closed blocker that is an item of a live request must stack its CR on that request")
+            # nixes-dl0ru F5: the bases a CR's items wait on hold those items, not the CR: a free item stays ready on the target.
+            split = readiness(cr_issue("b", "passed"), cr_issue("c", "passed"), cr_issue("w"), cr_item("w.i", "w", blocks=("b",)),
+                              cr_item("w.j", "w", blocks=("c",)), cr_item("w.k", "w"))["w"]
+            if split != ("implement", ([], [])):
+                raise ValueError(f"two bases of two items hold those items, not the CR with a free item: {split}")
+            mixed = readiness(cr_issue("s", "passed"), cr_issue("c", "passed"), cr_issue("w", blocks=("s",)), cr_item("w.i", "w", blocks=("c",)), cr_item("w.k", "w"))["w"]
+            if mixed != ("implement", ([], ["s"])):
+                raise ValueError(f"a CR stacks on its own base; an item's other base holds only that item: {mixed}")
+            # nixes-dl0ru F4: a task outside any CR cannot stack, so its wait on a done item of an unlanded CR holds until that CR lands, in a
+            # complete snapshot and in a status one whose closed child comes from the closed list.
+            probe = {"id": "p", "title": "probe", "issue_type": "task", "status": "open", "priority": 2, "description": "d", "metadata": {"no_commit": True},
+                     "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z", "dependencies": [{"issue_id": "p", "depends_on_id": "done", "type": "blocks"}]}
+            for status in ("open", "passed", "closed"):
+                for snapshot in ([cr_issue("lb", status), {**closed_child, "title": "done", "priority": 2}, probe], [cr_issue("lb", status), probe]):
+                    with patch.object(board, "bd_show", show_outside), patch.object(board, "bd_closed", lambda: [closed_child]):
+                        deck = bare_deck(snapshot, len(snapshot) == 3)
+                        got = (deck.claimable(probe), deck.waits_of(probe))
+                    if got != (("plan", []) if status == "closed" else (None, ["lb"])):
+                        raise ValueError(f"a standalone task waiting on a done item of a {status} CR ({len(snapshot)} records): {got}")
 
             # A failed read of the outside blockers is not remembered: the next ask reads them again, not treats them as closed.
             def failing_once():
@@ -5483,13 +5506,13 @@ def validate_board(root: Path) -> None:
             retry_deck = bare_deck([cr_issue("rw", blocks=("ext9",)), *item_of(cr_issue("rw"))], complete=False)
             with patch.object(board, "bd_show", show_outside), patch.object(board, "bd_closed", failing_once):
                 try:
-                    retry_deck.fetch_cr_blockers()
+                    retry_deck.fetch_outside_blockers()
                 except board.BoardError:
                     pass
-                if retry_deck._cr_blockers_read:
+                if retry_deck._outside_blockers_read:
                     raise ValueError("a failed read of the outside blockers must not be remembered as done")
-                retry_deck.fetch_cr_blockers()
-            if not retry_deck._cr_blockers_read or len(lists) != 3:
+                retry_deck.fetch_outside_blockers()
+            if not retry_deck._outside_blockers_read or len(lists) != 3:
                 raise ValueError(f"the next ask must read the outside blockers again: {lists}")
             # A review waits while its base was returned (q206).
             for base_status, expect in (("open", None), ("in_review", None), ("passed", "review")):
@@ -10655,9 +10678,12 @@ def validate_protocol(root: Path, part: str) -> None:
             board_calls = calls()
             records = Path(str(log) + ".records").read_text(encoding="utf-8")
             # fx-b rests on fx-a (waitsOn), decided, not in force: a person's answer is recorded decided and waits on it (nixes-rzfij).
-            expected = [["claim", "fx-a"], ["ruling", "record", "fx-a"], ["show", "fx-a", "--json", "--field", "status"], ["claim", "fx-b"], ["ruling", "record", "fx-b"],
+            # Each record: claimed, recorded, then linked (nixes-dl0ru F8).
+            expected = [["claim", "fx-a"], ["ruling", "record", "fx-a"], ["show", "fx-a", "--json", "--field", "status"],
+                        ["claim", "fx-b"], ["ruling", "record", "fx-b"],
                         ["wait", "fx-b", "--on", "fx-a"], ["bd", "list", "--external-ref"], ["ruling", "revise", "fx-old", "--title", "Pasted point", "--body-file"],
-                        ["show", "fx-rev1"], ["link", "fx-rev1", "fx-rel", "--type", "relates-to"], ["claim", "fx-rev1"], ["ruling", "record", "fx-rev1"],
+                        ["claim", "fx-rev1"], ["ruling", "record", "fx-rev1"],
+                        ["show", "fx-rev1", "--json", "--field", "dependencies"], ["link", "fx-rev1", "fx-rel", "--type", "relates-to"],
                         ["health", "--json", "--items", "decided"]]  # one Record writes all three
             if [c["args"][:len(want)] for c, want in zip(board_calls, expected)] != expected or len(board_calls) != len(expected) \
                     or board_calls[7]["args"][-2:] != ["--holds", "none"] \
@@ -13822,6 +13848,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": " "}, needle="`until`", **rules)
             refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "in a few weeks"}, needle="2026-12-01", **rules)
             refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "+3d"}, needle="2026-12-01", **rules)
+            refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "2027-02-31"}, needle="2026-12-01", **rules)  # nixes-dl0ru F12: no such day
             proto("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "2026-12-01"}, **rules)
             proto("defer", stdin={"question": ids[3], "quote": "the old store can wait"}, **rules)
             states = [q["status"] for q in shown(**rules)["questions"]]
@@ -14531,9 +14558,19 @@ def validate_protocol(root: Path, part: str) -> None:
             calls()
             proto("step", stdin={"records": {rule_c: {"rationale": "Took it for fx-c.", "ruleOwner": "docs/x.md", "reversal": "Revise the ruling."},
                                              answer_p: {"rationale": "Took fx-p.", "ruleOwner": "docs/x.md", "reversal": "board bd reopen fx-p"}}}, **away)
-            recorded = [args[2] for args in (c["args"] for c in calls()) if args[:2] == ["ruling", "record"]]
+            made = [c["args"] for c in calls()]
+            recorded = [args[2] for args in made if args[:2] == ["ruling", "record"]]
             if recorded != ["fx-p", "fx-rule2"]:
                 raise ValueError(f"away answers are recorded premise first: {recorded}")
+            # nixes-dl0ru F8: the new ruling is claimed, recorded, then given the settled item's wait on the premise now in force: a wait
+            # written on the open record first would hand its claim back (board wait) or keep the claim from taking it (waits on fx-p).
+            at = lambda head: next((n for n, args in enumerate(made) if args[:len(head)] == head), None)
+            order = [at(["claim", "fx-rule2"]), at(["ruling", "record", "fx-rule2"]), at(["wait", "fx-rule2", "--on", "fx-p"])]
+            if None in order or order != sorted(order):
+                raise ValueError(f"Record claims a new ruling, records it, then writes its inherited waits: {order}\n{made}")
+            # nixes-dl0ru F11: the question an away ruling answers closes superseded, as the attended release closes it.
+            if not any(args[:2] == ["close", "fx-c"] and args[-2:] == ["--outcome", "superseded"] for args in made):
+                raise ValueError(f"an away ruling closes the question it settles as superseded:\n{made}")
 
             # D: the check cap while away: no cap dialog, the unsettled questions park.
             patch_config(health={"counts": counts, "items": {"questions": [
@@ -15123,6 +15160,8 @@ def validate_board_rules(root: Path) -> None:
     WORLD += [record("r-crd-item2", "task", parent="r-crd"), record("r-loose", "task"),
               record("r-qx", "decision", status="closed", metadata={"outcome": "dropped"}, waits=("r-tdrop",)),
               record("r-tdone2", "task", status="closed", metadata={**NC, "outcome": "done"}, waits=("r-tdrop",)),
+              record("r-gatex", "gate", status="closed", await_type="human", metadata={"outcome": "resolved"}),
+              record("r-q2x", "decision", status="closed", metadata={"outcome": "dropped"}), record("r-qd", "decision", status="deferred", metadata={"deferred_by": "user"}),
               record("r-ruleold", "decision", status="closed", metadata={"outcome": "superseded"})]
     WORLD[-1]["dependencies"].append({"issue_id": "r-ruleold", "depends_on_id": "r-rule", "type": "supersedes"})
 
@@ -15163,17 +15202,15 @@ def validate_board_rules(root: Path) -> None:
                 raise ValueError(f"actor.none: board {argv} in a session with no derivable actor must be refused by actor.none, writing nothing: {code} {got} {err!r} {fake.writes()}")
         return check
 
-    def gap(cell, verb):
-        def check(case_cell=None):
-            if not cells[cell][2].startswith(f"gap {open_gaps[cell]}") and not cells[cell][1].startswith(f"gap {open_gaps[cell]}"):
-                raise ValueError(f"{cell} is no longer an open gap: give ({verb}, {cell}) its case")
-        return check
-
     # Cases by cell: {(verb, form): check} (a kind-specific verb: {(verb, form, kind): check}). A check of None is the static reach.
     cases: dict[str, dict] = {}
 
     def add(cell, mapping):
-        cases.setdefault(cell, {}).update(mapping)
+        """Registers each (verb, form[, kind]) case of a cell once: a second registration is a fault of this table."""
+        table = cases.setdefault(cell, {})
+        if twice := [key for key in mapping if key in table]:
+            raise ValueError(f"cases registered twice for {cell}: {twice}")
+        table.update(mapping)
 
     agent, planner, solo, lead, roleless = "aaaa1111", "plan0001", "solo0001", "lead0001", "cccc3333"
     add("parent-child.kind-fit", {
@@ -15210,8 +15247,8 @@ def validate_board_rules(root: Path) -> None:
                                **{("move", "any", kind): refused(["move", subject, "--to", target], "is closed", actor=None)  # only an open record changes its parent
                                   for kind, subject, target in (("no-commit", "r-tdone", "r-cr"), ("cr", "r-crx", "r-ms"), ("decision", "r-qx", "r-cr"),
                                                                 ("gate", "r-gatex", "r-cr"), ("milestone", "r-msx", "r-cr"))}})
-    cases["parent-child.leave"][("move", "any", "gate")] = refused(["move", "r-gatex", "--to", "r-cr"], "is closed", actor=None,
-                                                                   issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human", metadata={"outcome": "resolved"})])
+    add("parent-child.enter", {("move", "any", "no-commit"): every(refused(["move", "r-tdef", "--to", "r-cr"], "agents board undefer r-tdef", actor=None),  # nixes-dl0ru F1
+                                                                   refused(["move", "r-theld", "--to", "r-cr"], "agents board unclaim r-theld", actor=None))})
     add("parent-child.cr-stays", {("move", "any", kind): (wrote(["move", SUBJECT[kind] if kind == "no-commit" else "r-cr-item", "--to", "r-cr2"], update_has("--parent", "r-cr2"), actor=None)
                                                           if kind in ("task", "no-commit") else refused(["move", "r-cr", "--to", "r-cr2"], "change request", actor=None)) for kind in ("task", "no-commit", "cr")})
     add("parent-child.queue", {("move", "any", kind): refused(["move", {"task": "r-cr-item", "no-commit": "r-t", "cr": "r-cr"}[kind], "--to", "r-ms" if kind == "cr" else "r-cr2"],
@@ -15228,15 +15265,22 @@ def validate_board_rules(root: Path) -> None:
         **{("move", "any", kind): refused(["move", "r-t2", "--to", "r-crd"], "deferred", issues=W(("r-t", "r-t2", "blocks")), actor=None) for kind in ("no-commit", "task")},
         ("create", "deps-id"): refused([*CREATE, "--no-commit", "--deps", "r-tdef"], "deferred", actor=None),
         ("create", "holds"): wrote([*CREATE, "-t", "decision", "--holds", "r-t"], graph_has(lambda plan: True), actor=None),
-        ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, waits_on=[{"on": "r-tdef", "for": "x"}])])], "deferred", actor=None),
+        ("create", "graph"): every(refused(["create", "--graph", plan_file([node(no_commit=True, waits_on=[{"on": "r-tdef", "for": "x"}])])], "deferred", actor=None),
+                                   refused(["create", "--graph", plan_file([node("c", parent_id="r-crd"), node("s", no_commit=True, waits_on=[{"on": "c", "for": "x"}])])],
+                                           "r-crd is deferred", actor=None)),  # nixes-dl0ru F3: a new item of a deferred CR, as an existing one
         ("wait", "same-cr"): refused(["wait", "r-crd-item", "--on", "r-crd-item2", "--for", "x"], "deferred", actor=solo),
         ("wait", "other-cr"): refused(["wait", "r-item", "--on", "r-crd-item", "--for", "x"], "deferred"),
         ("wait", "cr"): refused(["wait", "r-cr", "--on", "r-crd", "--for", "x"], "deferred", actor=solo),
         **{("defer", "any", kind): refused(["defer", target, "--reason", "set aside"], waiter, issues=W((waiter, target, "blocks")), actor=None)
            for kind, target, waiter in (("task", "r-t2", "r-t"), ("cr", "r-cr2", "r-t"))},
         ("defer", "any", "decision"): refused(["defer", "r-q", "--reason", "set aside"], "r-held", issues=W(("r-item", "r-q", "blocks")), actor=None),
+        # nixes-dl0ru F9: an undeferral leaves nothing waiting on a deferred record, unless the same call undefers it too
+        ("undefer", "any", "task"): every(refused(["undefer", "r-tdef"], "r-crd", issues=W(("r-tdef", "r-crd-item", "blocks")), actor=None),
+                                          wrote(["undefer", "r-tdef", "r-crd"], update_has("r-tdef", "open"), issues=W(("r-tdef", "r-crd-item", "blocks")), actor=None)),
+        ("undefer", "any", "cr"): refused(["undefer", "r-crd"], "r-tdef", issues=W(("r-crd-item", "r-tdef", "blocks")), actor=None),
+        ("undefer", "any", "decision"): refused(["undefer", "r-qd"], "r-tdef", issues=W(("r-qd", "r-tdef", "blocks")), actor=None),
         ("gate create", "any"): None, ("ruling supersede", "any"): refused(["ruling", "supersede", "r-rule", "--with", "r-qd"], "deferred", writes=by_design, actor=solo,
-                                             issues=[*W(("r-t", "r-rule", "relates-to")), record("r-qd", "decision", status="deferred", metadata={"deferred_by": "user"})]),
+                                             issues=W(("r-t", "r-rule", "relates-to"))),
     })
     add("blocks.external", {("create", "deps-id"): refused([*CREATE, "--no-commit", "--deps", "waits-on:external:proj:cap"], "external", actor=None),
                             ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, waits_on=[{"on": "external:proj:cap", "for": "x"}])])], "external", actor=None),
@@ -15256,9 +15300,17 @@ def validate_board_rules(root: Path) -> None:
                                                              issues=W(("r-dec", "r-rule", "tracks"), ("r-ms", "r-rule", "relates-to"))),
                           ("ruling supersede", "any"): refused(SUPERSEDE, "milestone", writes=by_design, actor=solo, issues=W(("r-ms", "r-rule", "relates-to")))})
     cycle_world = W(("r-item", "r-cr-item", "blocks"))
+
+    def crossing(targets):
+        """A plan of two new CRs A and B with two items each: a1 waits on targets[0], b2 on targets[1]."""
+        return [node("A", "change-request"), node("B", "change-request"), node("a1", parent_key="A", waits_on=[{"on": targets[0], "for": "x"}]),
+                node("a2", parent_key="A"), node("b1", parent_key="B"), node("b2", parent_key="B", waits_on=[{"on": targets[1], "for": "x"}])]
     add("blocks.cycle", {("create", "deps-id"): refused([*CREATE, "--parent", "r-cr", "--deps", "r-item"], "cycle", issues=cycle_world, actor=None),
                          ("create", "holds"): refused([*CREATE, "-t", "decision", "--deps", "r-q", "--holds", "r-q"], "cycle", actor=None),
-                         ("create", "graph"): refused(["create", "--graph", plan_file([node(parent_id="r-cr", waits_on=[{"on": "r-item", "for": "x"}])])], "cycle", issues=cycle_world, actor=None),
+                         ("create", "graph"): every(refused(["create", "--graph", plan_file([node(parent_id="r-cr", waits_on=[{"on": "r-item", "for": "x"}])])], "cycle", issues=cycle_world, actor=None),
+                                                    # nixes-dl0ru F2: two new CRs whose new items wait across them; the same plan without the loop is written
+                                                    refused(["create", "--graph", plan_file(crossing(("b1", "a2")))], "cycle", actor=None),
+                                                    wrote(["create", "--graph", plan_file(crossing(("b1", "b1")))], graph_has(lambda plan: len(plan["nodes"]) == 6), actor=None)),
                          **{("move", "any", kind): refused(["move", "r-t", "--to", "r-held"], "cycle", issues=W(("r-cr-item", "r-item", "blocks"), ("r-t", "r-cr-item", "blocks")))
                             for kind in ("task", "no-commit")},
                          ("wait", "same-cr"): refused(["wait", "r-item", "--on", "r-item2", "--for", "x"], "cycle", issues=W(("r-item2", "r-item", "blocks"))),
@@ -15291,21 +15343,20 @@ def validate_board_rules(root: Path) -> None:
                        })
     add("blocks.writers", {("create", "deps-id"): wrote([*CREATE, "--no-commit", "--deps", "r-q"], graph_has(lambda plan: plan["nodes"][0].get("deps") == [{"target": "r-q", "type": "blocks"}]), actor=None),
                            ("create", "graph"): refused(["create", "--graph", plan_file([node("a", no_commit=True), node("b", no_commit=True)], [{"from_key": "a", "to_key": "b", "type": "blocks"}])], "not a link word", actor=None),
+                           ("wait", "same-cr"): wrote(["wait", "r-crd-item", "--on", "r-crd-item2", "--for", "x"], batch_has("dep add r-crd-item r-crd-item2 blocks"),
+                                                      issues=W(r_crd={"status": "open"}), actor=solo),
                            **{("wait", form): wrote(["wait", waiter, "--on", target, "--for", "x"], batch_has(f"dep add {waiter} {target} blocks"), actor=solo)
-                              for form, waiter, target in (("same-cr", "r-cr-item", "r-cr-item"), ("other-cr", "r-cr-item", "r-t"), ("cr", "r-cr", "r-cr2"))},
+                              for form, waiter, target in (("other-cr", "r-cr-item", "r-t"), ("cr", "r-cr", "r-cr2"))},
                            ("link", "any"): refused(["link", "r-t", "r-t2", "--type", "blocks"], "not a link word", actor=None)})
-    cases["blocks.writers"][("wait", "same-cr")] = wrote(["wait", "r-crd-item", "--on", "r-crd-item2", "--for", "x"], lambda w, f: True, issues=W(r_crd={"status": "open"}), actor=solo)
     add("blocks.pair", {("wait", form): wrote(["wait", waiter, "--on", target, "--for", "x"], batch_has(f"dep remove {waiter} {target}"), issues=W((waiter, target, "relates-to")), actor=solo)
-                        for form, waiter, target in (("same-cr", "r-crd-item", "r-crd-item2"), ("other-cr", "r-cr-item", "r-t"), ("cr", "r-cr", "r-cr2"))})
-    cases["blocks.pair"][("wait", "same-cr")] = wrote(["wait", "r-item", "--on", "r-item2", "--for", "x"], batch_has("dep remove r-item r-item2"), issues=W(("r-item", "r-item2", "relates-to")))
+                        for form, waiter, target in (("same-cr", "r-item", "r-item2"), ("other-cr", "r-cr-item", "r-t"), ("cr", "r-cr", "r-cr2"))})
     add("blocks.no-dropped-close", {("close", "one-id"): refused(["close", "r-t2", "--reason", "dropped while it is waited on", "--outcome", "dropped"], "r-t", issues=W(("r-t", "r-t2", "blocks")), actor=None),
                                     ("close", "ids"): refused(["close", "r-q", "r-t2", "--reason", "dropped while it is waited on", "--outcome", "dropped"], "r-t", issues=W(("r-t", "r-t2", "blocks")), actor=None),
                                     ("close", "conflict"): None,
                                     ("cr reject", "any"): refused(["cr", "reject", "r-cr", "dropped while its item is waited on"], "r-t",
                                                                   issues=W(("r-t", "r-cr-item", "blocks"), r_cr_item={"status": "closed", "metadata": {"outcome": "done"}}), actor=None)})
-    add("blocks.reopen", {("reopen", "any", kind): refused(["reopen", subject], "r-tdrop", actor=None) if subject else wrote(["reopen", "r-msx"], update_has("r-msx", "--status", "open"), actor=None)
-                          for kind, subject in (("task", "r-tdone2"), ("decision", "r-qx"), ("gate", None), ("milestone", None))})
-    cases["blocks.reopen"][("reopen", "any", "gate")] = wrote(["reopen", "r-gatex"], update_has("r-gatex", "--status", "open"), issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human", metadata={"outcome": "resolved"})], actor=None)
+    add("blocks.reopen", {("reopen", "any", kind): refused(["reopen", subject], "r-tdrop", actor=None) if refusing else wrote(["reopen", subject], update_has(subject, "--status", "open"), actor=None)
+                          for kind, subject, refusing in (("task", "r-tdone2", True), ("decision", "r-qx", True), ("gate", "r-gatex", False), ("milestone", "r-msx", False))})
     add("relates-to.free", {("link", "any"): wrote(["link", "r-item", "r-t", "--type", "relates-to"], batch_has("dep add r-item r-t relates-to"), actor=agent),
                             ("unlink", "any"): wrote(["unlink", "r-item", "r-t"], batch_has("dep remove r-item r-t"), issues=W(("r-item", "r-t", "relates-to")), actor=agent)})
     add("relates-to.types", {("create", "deps-type"): refused([*CREATE, "--no-commit", "--deps", "related:r-q"], "relates-to", actor=None),
@@ -15353,14 +15404,18 @@ def validate_board_rules(root: Path) -> None:
     seen_only = lambda writes: all(w[:2] == ["update", "r-cr"] and "user_seen_tip=t1" in " ".join(w) for w in writes)
     edits = {"opened": "o1", "edited": True, "files": ["a.py"], "commits": [], "dirty": True, "tip": "t1", "editsTree": None, "why": None}
     with_edits = ((board, "review_read", lambda board_, item: edits),)
+    landed_world = W(r_ir={"metadata": {"author": roleless, "landing": "t1"}})  # an in-review CR whose landing tip the target holds: settle_landed finishes it
+    landed_git = ((board, "main_of", lambda b: hand_dir), (board, "target_branch", lambda b, m: "main"), (board, "view_rev", lambda *a: "b1"),
+                  (board, "git_text", lambda root, *a, **k: f"t1 refs/heads/{board.cr_branch('r-ir')}\n" if a[:1] == ("for-each-ref",) else ""),
+                  (board, "fetch_board", lambda main: None))
     add("status.row", {**{("wait", form): wrote(["wait", "r-theld", "--on", "r-t2", "--for", "x"], update_has("r-theld", "--assignee", ""), actor=agent) for form in ("same-cr", "other-cr", "cr")},
                        ("close", "one-id"): refused(["close", "r-item", "--reason", "closed by a non-holder session"], "r-held", actor=agent),
                        ("close", "ids"): refused(["close", "r-t", "r-item", "--reason", "closed by a non-holder session"], "r-held", actor=agent),
                        **{("reopen", "any", kind): refused(["reopen", subject], None, actor=agent) for kind, subject in (("task", "r-crx-item"), ("decision", "r-qx"), ("milestone", "r-msx"))},
-                       ("reopen", "any", "gate"): refused(["reopen", "r-gatex"], None, issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human")], actor=agent),
+                       ("reopen", "any", "gate"): refused(["reopen", "r-gatex"], None, issues=None, actor=agent),
                        **{("defer", "any", kind): refused(["defer", SUBJECT[kind], "--reason", "set aside"], None, actor=agent) for kind in ("task", "cr", "decision")},
                        **{("undefer", "any", kind): refused(["undefer", subject], None, actor=agent) for kind, subject in (("task", "r-tdef"), ("cr", "r-crd"))},
-                       ("undefer", "any", "decision"): refused(["undefer", "r-qd"], None, issues=[*world(), record("r-qd", "decision", status="deferred", metadata={"deferred_by": "user"})], actor=agent),
+                       ("undefer", "any", "decision"): refused(["undefer", "r-qd"], None, issues=None, actor=agent),
                        ("claim", "any"): refused(["claim", "r-ir"], "your own hand-over", issues=W(r_ir={"metadata": {"author": agent}}), actor=agent), ("take", "any"): refused(["take", "r-held"], None, actor=agent),
                        ("unclaim", "any"): refused(["unclaim", "r-held"], None, actor=agent),
                        ("cr reject", "any"): refused(["cr", "reject", "r-cr", "the approach fails"], None, actor=agent),
@@ -15385,19 +15440,15 @@ def validate_board_rules(root: Path) -> None:
                                                    patches=(*land_git, (board, "check_pair", lambda cr: {"result": "pass", "tip": "t1", "baseTip": "b1"}))),
                        ("handover", "look-after"): handover_case(["handover", "r-ir", "reviewed"], update_has("r-ir", "--status", "passed"), agent,  # its landing refused: it waits passed
                                                                  W(r_ir={"assignee": agent, "metadata": {"author": roleless, "reviewing_tip": "t1", "look": "after"}})),
-                       ("command start", "any"): wrote(["queue"], lambda w, f: any(x[:2] == ["close", "r-ir"] for x in w), issues=W(r_ir={"metadata": {"author": roleless, "landing": "t1"}}), actor=solo,
-                                                       patches=((board, "main_of", lambda b: hand_dir), (board, "target_branch", lambda b, m: "main"), (board, "view_rev", lambda *a: "b1"),
-                                                                (board, "git_text", lambda root, *a, **k: f"t1 refs/heads/{board.cr_branch('r-ir')}\n" if a[:1] == ("for-each-ref",) else ""),
-                                                                (board, "fetch_board", lambda main: None))),
+                       ("command start", "any"): wrote(["queue"], lambda w, f: any(x[:2] == ["close", "r-ir"] for x in w), issues=landed_world, actor=solo, patches=landed_git),
                        ("cr edits", "any"): wrote(["cr", "edits", "r-cr", "--tip", "t1", "--commit"], update_has("r-cr", "--status", "in_review"), issues=land_world, actor=lead,
                                                   patches=(*land_git, *handover_git, (board, "review_read", lambda b, i: {**edits, "opened": "t1", "dirty": False, "commits": ["c1"]})))})
     add("status.who-planner", {  # the row's Who naming a planner: a status.row refusal
         ("claim", "any"): refused(["claim", "r-rule"], "pulling plan", actor=agent, cell="status.row"),
         ("return", "ruling"): refused(["return", "r-ir", "x", "--ruling", "r-rule"], "plan", actor=agent, cell="status.row")})
     add("status.open-parent", {("reopen", "any", kind): refused(["reopen", "r-crx-item"], "closed", actor=None) if kind == "task" else
-                               wrote(["reopen", "r-msx"], update_has("r-msx", "open"), actor=None) for kind in ("task", "decision", "gate", "milestone")})
-    cases["status.open-parent"][("reopen", "any", "decision")] = wrote(["reopen", "r-q2x"], update_has("r-q2x", "open"), issues=[*world(), record("r-q2x", "decision", status="closed", metadata={"outcome": "dropped"})], actor=None)
-    cases["status.open-parent"][("reopen", "any", "gate")] = wrote(["reopen", "r-gatex"], update_has("r-gatex", "open"), issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human")], actor=None)
+                               wrote(["reopen", subject], update_has(subject, "open"), actor=None)
+                               for kind, subject in (("task", None), ("decision", "r-q2x"), ("gate", "r-gatex"), ("milestone", "r-msx"))})
     add("status.owner", {("update", "refused-flag"): refused(["update", "r-t", "--status", "closed"], None, actor=None, by_parser=True)})
     add("assignee.owner", {("update", "refused-flag"): refused(["update", "r-t", "--assignee", "x"], None, actor=None, by_parser=True)})
     add("issue_type.owner", {("update", "refused-flag"): refused(["update", "r-t", "--type", "bug"], None, actor=None, by_parser=True)})
@@ -15413,9 +15464,10 @@ def validate_board_rules(root: Path) -> None:
                          ("ruling record", "unratified"): wrote(["ruling", "record", "r-dec", str(body), "--unratified"], update_has("r-dec", "--assignee", "--if-assignee", "lead0001"), actor=lead),
                          ("ruling release", "any"): wrote(RELEASE, update_has("r-dec", "--status in_force --assignee  --if-assignee lead0001"), actor=lead)})
     add("assignee.ready", {("claim", "any"): every(refused(["claim", "r-q"], "waits on r-t", issues=W(("r-q", "r-t", "blocks")), actor=agent),
+                                                   refused(["claim", "r-t"], "waits on r-cr", issues=W(("r-t", "r-cr-item", "blocks"), r_cr_item={"status": "closed",  # nixes-dl0ru F4
+                                                                                                                                             "metadata": {"outcome": "done"}}), actor=agent),
                                                    refused(["claim", "r-ms"], "milestone not ready", issues=W(("r-cr", "r-ms", "parent-child")), actor=solo))})
     add("assignee.work-needs-cr", {("claim", "any"): refused(["claim", "r-loose"], "change request", actor=agent)})
-    add("assignee.stale-evidence", {("take", "any"): gap("assignee.stale-evidence", "take"), ("unclaim", "any"): gap("assignee.stale-evidence", "unclaim")})
     add("issue_type.types", {("create", "any"): refused([*CREATE, "-t", "feature"], "not a board type", actor=None),
                              ("create", "graph"): refused(["create", "--graph", plan_file([node(kind="gate")])], "gate create", actor=None),
                              ("gate create", "any"): wrote(["gate", "create", "--blocks", "r-t", "--reason", "a person signs"], lambda w, f: any(x[:3] == ["gate", "create", "--type=human"] for x in w), actor=None)})
@@ -15461,15 +15513,17 @@ def validate_board_rules(root: Path) -> None:
     add("meta.found-in", {("create", "any"): refused([*CREATE, "--no-commit", "--found-in", "r-nope"], "unknown", actor=None),
                           ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, found_in="r-nope")])], "unknown", actor=None)})
     add("meta.move-keys", {("update", "refused-flag"): refused(["update", "r-t", "--set-metadata", "outcome=dropped"], None, actor=None, by_parser=True),
-                           ("close", "one-id"): wrote(["close", "r-t", "--reason", "done with the probe here"], update_has("r-t", "outcome=done"), actor=None),
+                           ("close", "one-id"): every(wrote(["close", "r-t", "--reason", "done with the probe here"], update_has("r-t", "outcome=done"), actor=None),
+                                                      wrote(["close", "r-q", "--reason", "another ruling answered it", "--outcome", "superseded"],  # nixes-dl0ru F11
+                                                            update_has("r-q", "outcome=superseded"), actor=None)),
                            **{("reopen", "any", kind): wrote(["reopen", subject], update_has(subject, "--unset-metadata", "outcome"), actor=None)
                               for kind, subject in (("task", "r-tdone"), ("milestone", "r-msx"))},
-                           ("reopen", "any", "decision"): wrote(["reopen", "r-q2x"], update_has("r-q2x", "--unset-metadata", "outcome"), issues=[*world(), record("r-q2x", "decision", status="closed", metadata={"outcome": "dropped"})], actor=None),
-                           ("reopen", "any", "gate"): wrote(["reopen", "r-gatex"], update_has("r-gatex", "--unset-metadata", "outcome"), issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human", metadata={"outcome": "resolved"})], actor=None),
+                           ("reopen", "any", "decision"): wrote(["reopen", "r-q2x"], update_has("r-q2x", "--unset-metadata", "outcome"), issues=None, actor=None),
+                           ("reopen", "any", "gate"): wrote(["reopen", "r-gatex"], update_has("r-gatex", "--unset-metadata", "outcome"), issues=None, actor=None),
                            **{("defer", "any", kind): wrote(["defer", SUBJECT[kind], "--reason", "set aside"], update_has(SUBJECT[kind], "deferred_by="), actor=None) for kind in ("task", "cr", "decision")},
                            **{("undefer", "any", kind): wrote(["undefer", subject], update_has(subject, "--unset-metadata", "deferred_by"), issues=issues, actor=None)
                               for kind, subject, issues in (("task", "r-tdef", None), ("cr", "r-crd", None),
-                                                            ("decision", "r-qd", [*world(), record("r-qd", "decision", status="deferred", metadata={"deferred_by": "user"})]))}})
+                                                            ("decision", "r-qd", None))}})
     deep = {"deep_review": "the failure path"}
     keeps = lambda verb_writes: lambda writes, fake: verb_writes(writes, fake) and not any("deep_review" in " ".join(w) for w in writes)
     add("meta.deep-review", {  # only the reviewer's pass clears the mark; unclaim, return and the author's hand-over keep it (nixes-fy01y)
@@ -15569,11 +15623,13 @@ def validate_board_rules(root: Path) -> None:
                    ("share", "any", "held-record.write"), ("share", "any", "queue.owner")}
     registered, ran, kinds_run = {}, collections.Counter(), collections.Counter()
     for verb, form, kind, cell in sorted(tuples):
-        if cell in static_cells:
+        if cell in open_gaps and f"gap {open_gaps[cell]}" in cells[cell][1:]:
+            registered[(verb, form, kind, cell)] = ("gap", None)  # a deferred obligation: no case until the gap closes, then the case lookup below demands one
+        elif cell in static_cells:
             registered[(verb, form, kind, cell)] = ("static", lambda verb=verb, cell=cell: static(verb)(cell))
         elif cell == "actor.none":
-            registered[(verb, form, kind, cell)] = ("run", (broken_actor(*actor_argv[verb][:3], **(actor_argv[verb][3:] or [{}])[0]) if isinstance(actor_argv[verb], tuple) else broken_actor(actor_argv[verb])) if verb in actor_argv
-                                                    else (lambda verb=verb: None if reaches(handlers[verb], {"acting"}) else (_ for _ in ()).throw(ValueError(f"{verb} reaches no acting()"))))
+            registered[(verb, form, kind, cell)] = ("run", broken_actor(*actor_argv[verb][:3], **(actor_argv[verb][3:] or [{}])[0]) if isinstance(actor_argv[verb], tuple) else broken_actor(actor_argv[verb])) if verb in actor_argv \
+                else ("static", lambda verb=verb: None if reaches(handlers[verb], {"acting"}) else (_ for _ in ()).throw(ValueError(f"{verb} reaches no acting()")))
         else:
             table = cases.get(cell, {})
             key = (verb, form, kind) if (verb, form, kind) in table else (verb, form)
@@ -15609,16 +15665,27 @@ def validate_board_rules(root: Path) -> None:
         with patch.dict(os.environ, session_env(state_dir)), patch.object(board, "holder_gone", lambda *a: False), patch.object(board, "person", lambda: "anna"):
             for key, (mode, check) in sorted(registered.items()):
                 try:
-                    check()
+                    if check is not None:
+                        check()
                 except Exception as error:  # every failing case is reported, not only the first
                     failures.append(f"{key}: {str(error)[:600]}")
                 ran[mode] += 1
                 kinds_run[key[3]] += 1
+            repros = {  # nixes-dl0ru: bugs whose refusal or write no rule tuple names
+                "F10 a read on a board of another model finishes no landing": wrote(["queue"], lambda w, f: not w, issues=landed_world, actor=solo,
+                                                                                     patches=(*landed_git, (board, "MODEL", "2"), (board, "beads_dir", lambda *a: Path(Rules.project) / ".beads"))),
+                "F12 defer --until refuses a day the calendar lacks": refused(["defer", "r-t", "--reason", "set aside", "--until", "2027-02-31"], "calendar", actor=None),
+                "F12 defer --until takes a leap day": wrote(["defer", "r-t", "--reason", "set aside", "--until", "2028-02-29"], update_has("r-t", "revisit=2028-02-29"), actor=None)}
+            for name, check in repros.items():
+                try:
+                    check()
+                except Exception as error:
+                    failures.append(f"{name}: {str(error)[:600]}")
         if failures:
-            raise ValueError(f"{len(failures)} of {len(registered)} write-rule cases fail:\n  " + "\n  ".join(failures))
+            raise ValueError(f"{len(failures)} of {len(registered) + len(repros)} write-rule cases and repros fail:\n  " + "\n  ".join(failures))
     os.chdir(previous_cwd)
     scratch_repo.cleanup()
-    print(f"board rules: {len(registered)} cases ({ran['run']} run, {ran['static']} static reach) over {len(kinds_run)} cells")
+    print(f"board rules: {len(registered)} cases ({ran['run']} run, {ran['static']} static reach, {ran['gap']} open gap) over {len(kinds_run)} cells")
 
 
 def run_group(name: str, root: Path) -> None:

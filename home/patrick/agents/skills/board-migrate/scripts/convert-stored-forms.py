@@ -104,19 +104,6 @@ class Board:
                     return True
         return False
 
-    def reaches(self, start: str, goal: str) -> bool:
-        """Whether `start` depends on `goal` through waits or parenthood: a wait of `goal` on `start` would close a cycle bd refuses."""
-        seen, todo = set(), [start]
-        while todo:
-            node = todo.pop()
-            if node == goal:
-                return True
-            if node in seen or node not in self.issues:
-                continue
-            seen.add(node)
-            todo += [target for target, kind in edges(self.issues[node]) if kind in ('blocks', 'parent-child')]  # bd's cycle check follows both, whatever the status
-        return False
-
     def live(self) -> list[dict]:
         return [i for i in self.issues.values() if i['status'] != 'closed']
 
@@ -345,22 +332,16 @@ def leave_deferred(issue: dict, cr: str, orphan: dict | None) -> None:
           *(flag for label in routed for flag in ('--remove-label', label)), '--json')
 
 
-_BOARD_MODULE = None
-
-
-def board_module():
-    """bin/board as a module, for what it owns: the Confirm-or-revise question's text. Executed once per run."""
-    global _BOARD_MODULE
-    if _BOARD_MODULE is not None:
-        return _BOARD_MODULE
+def load_board():
+    """bin/board as a module, executed once at import (no CLI dispatch on import): the one namespace for what it owns, the model version, the planning-wait test and the confirmation text."""
     loader = importlib.machinery.SourceFileLoader('board_model', str(BOARD))
     module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
     loader.exec_module(module)
-    _BOARD_MODULE = module
     return module
 
 
-MODEL_KEY, MODEL = board_module().MODEL_KEY, board_module().MODEL  # the model version: bin/board owns it
+BOARD_MODULE = load_board()
+MODEL_KEY, MODEL = BOARD_MODULE.MODEL_KEY, BOARD_MODULE.MODEL
 
 
 def refuse_newer_board() -> None:
@@ -375,7 +356,7 @@ def confirm_ruling(b: Board, issue: dict) -> None:
     related question with the same text). The question is made with its link in one write and goes first, so a rerun finds it."""
     item_id = issue['id']
     found = re.search(r'^##\s+Reversal\s*\n(.*?)(?=^##\s|\Z)', str(issue.get('description') or ''), re.MULTILINE | re.DOTALL | re.IGNORECASE)
-    title, description = board_module().confirmation_text(issue, found.group(1).strip() if found else 'Reversal: not recorded.')
+    title, description = BOARD_MODULE.confirmation_text(issue, found.group(1).strip() if found else 'Reversal: not recorded.')
     if not any(i.get('issue_type') == 'decision' and i.get('description') == description and (item_id, 'relates-to') in edges(i) for i in b.issues.values()):
         write('create', title, '-t', 'decision', '-d', description, '--priority', str(issue.get('priority', 2)), '--silent', '--deps', f'relates-to:{item_id}',
               *([] if b.parents.get(item_id) else shared_queue()), *(['--parent', b.parents[item_id][0]] if b.parents.get(item_id) else []),
@@ -463,30 +444,25 @@ def dates(b: Board, left: list[str]) -> list[Step]:
 
 
 def deferrals(b: Board, left: list[str]) -> list[Step]:
-    """A deferral whose reason named a condition (the words the old check refused) on open records is a wait; a deferral set aside is someday."""
+    """A deferral whose reason named a condition (the words the old check refused) reopens only when it already waits (a blocks link) on an open record.
+    No wait is read out of the note's prose (nixes-gym2j): any other such deferral stays a someday record, listed for the agent to decide with the user."""
     steps = []
     for issue in b.live():
         item_id = issue['id']
         reason = str(issue.get('notes') or '')
         if issue['status'] != 'deferred' or issue.get('defer_until') or b.is_item(issue) or issue.get('issue_type') == 'milestone' or not CONDITION.search(reason):
             continue
-        named = [i for i in dict.fromkeys(re.findall(r'[a-z][a-z0-9]*-[a-z0-9]{3,}(?:\.\d+)*', reason))
-                 if i in b.issues and i != item_id and b.issues[i]['status'] not in ('closed', 'deferred')]
-        cyclic = [target for target in named if b.reaches(target, item_id)]
-        named = [target for target in named if target not in cyclic]
-        if cyclic:
-            left.append(f'{item_id}: its deferral condition names {", ".join(cyclic)}, which already wait on it: a wait would form a cycle, so none is written for them')
-        if not named:
-            if cyclic:
-                continue
-            left.append(f'{item_id}: deferred on a condition no open record carries ("{reason[:100]}"); it stays set aside, or wait it on what it needs')
+        links = edges(issue)
+        live = lambda record: record.get('status') not in (None, 'closed', 'deferred')  # an item of a deferred change request is set aside with it
+        waits = [target for target, kind in links if kind in ('blocks', *OLD_WAITS) and live(b.issues.get(target, {}))
+                 and all(live(b.issues.get(parent, {})) for parent in b.parents.get(target, []) if b.issues.get(parent, {}).get('issue_type') == 'change-request')]
+        if waits:
+            steps.append((f'{item_id}: the deferral already waits on {", ".join(waits)}: open again', update(item_id, '--status', 'open')))
             continue
-
-        present = {t for t, _ in edges(issue)}
-        notes = [note_once(b, item_id, f'Waits on {target} for {reason[:300]}') for target in named if target not in present]
-        steps.append((f'{item_id}: the deferral condition becomes a wait on {", ".join(named)} (open again)',  # the edges and the reopening are one batch: the record reopens with its waits
-                      Seq(*notes, Lines(item_id, *(f'dep add {item_id} {target} blocks' for target in named if target not in present), f'update {item_id} status=open'))))
-        left.append(f'{item_id}: its deferral condition became a wait on {", ".join(named)}; check the wait says what you meant')
+        named = [i for i in dict.fromkeys(re.findall(r'[a-z][a-z0-9]*-[a-z0-9]{3,}(?:\.\d+)*', reason)) if i in b.issues and i != item_id]
+        left.append(f'{item_id}: deferred on a condition ("{reason[:100]}"), no wait on an open record; candidates named in the note: {", ".join(named) or "none"}; links: '
+                    f'{", ".join(f"{kind} {target}" for target, kind in links) or "none"}. Right after --mark decide it with the user: `agents board wait {item_id} --on <target> --for "<input>"` '
+                    f'then `agents board undefer {item_id}`, or leave it someday')
     return steps
 
 
@@ -615,7 +591,7 @@ def regate(now: Board, old: dict, title: str) -> None:
 
 
 def rulings(b: Board, left: list[str]) -> list[Step]:
-    """An in-force ruling waits only for its planning, a question not yet in force or a human gate. The old board also let it wait on a design or spike:
+    """An in-force ruling waits only for what the board counts as a planning wait (bin/board planning_wait: a human gate, or a decision that is open, decided or in force). The old board also let it wait on a design or spike:
     each such wait becomes a relates-to link (the planner makes the work wait on that design, plan.md). The rulings to plan are derived from the board, so a
     rerun after an interruption lists them again: every in-force ruling that relates to open work."""
     steps, planned = [], []
@@ -628,8 +604,7 @@ def rulings(b: Board, left: list[str]) -> list[Step]:
                 planned.append(ruling['id'])
             if kind != 'blocks' or other is None or other['status'] == 'closed':
                 continue
-            planning = (other.get('issue_type') == 'gate' and other.get('await_type') == 'human') or (other.get('issue_type') == 'decision' and other['status'] in ('open', 'decided'))
-            if planning:
+            if BOARD_MODULE.planning_wait(other):
                 continue
             steps.append((f'{ruling["id"]}: its wait on {target} becomes relates-to', Lines(ruling['id'], f'dep remove {ruling["id"]} {target}', f'dep add {ruling["id"]} {target} relates-to')))
             planned.append(ruling['id'])

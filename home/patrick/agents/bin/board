@@ -381,14 +381,14 @@ MOVES = (
     Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', ('agent',), ('in-work', 'items-closed', 'look-before', 'not-open-for-review')),
     Move('handover (reviewer passes)', CR_GROUP, ('in_review',), 'passed', 'you', '-', ('agent',), ('items-closed',)),
     Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', ('holding', 'deciding', 'user'), ('unheld-or-yours',)),
-    Move('return', CR_GROUP, ('in_review',), 'open', '*', '-', ('agent+holder', 'deciding', 'user'), ('held-by-you',)),
+    Move('return', CR_GROUP, ('in_review',), 'open', '*', '-', ('agent+holder',), ('held-by-you',)),  # the reviewer holding it (nixes-7wd88); a gone one's: take, then return
     Move('return', CR_GROUP, ('passed',), 'open', '*', '-', ('deciding', 'user'), ('unheld-or-yours',)),  # a change request waiting for its Accept is the Accept's to return
     Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', ('planner',)),
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', ('anyone',), (), ('landed',)),  # the target already holds the tip: the command checked before the fast-forward
     Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('attended', 'user'), ('reason', 'items-closed', 'no-waiters'), ('dropped',)),
     Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', ('anyone',)),
     Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', DEFER, ('no-hung-waiters',)),
-    Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
+    Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',), ('no-deferred-target',)),
     Move('claim', WORK_GROUP, ('open',), '=', '-', 'you', ('agent',)),
     Move('take', WORK_GROUP, ('open',), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
     Move('unclaim', WORK_GROUP, ('open',), '=', '*', '-', FREE_HOLD),
@@ -397,9 +397,9 @@ MOVES = (
     Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ITEM_WRITE, ('reason', 'no-waiters'), ('done', 'dropped')),
     Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ITEM_WRITE, ('open-parent', 'no-dropped-target')),
     Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', DEFER, ('no-hung-waiters',)),
-    Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
+    Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',), ('no-deferred-target',)),
     Move('defer', 'decision', ('open',), 'deferred', '*', '-', DEFER, ('no-hung-waiters',)),
-    Move('undefer', 'decision', ('deferred',), 'open', '-', '-', ('deferrer',)),
+    Move('undefer', 'decision', ('deferred',), 'open', '-', '-', ('deferrer',), ('no-deferred-target',)),
     Move('claim', 'decision', ('open', 'decided'), '=', '-', 'you', ('agent',)),  # which sessions a bare claim gives a question is the pull (ROLE_KINDS)
     Move('claim', 'decision', ('in_force',), '=', '-', 'you', ('planner',)),
     Move('take', 'decision', ('open', 'decided', 'in_force'), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
@@ -421,8 +421,9 @@ MOVES = (
 )
 
 
-def who_text(row: 'Move') -> str:
-    return ' or '.join(' and '.join(WHO_WORDS[part] for part in alternative.split('+')) for alternative in row.who)
+def who_text(who: tuple[str, ...]) -> str:
+    """A `who` (a row's, or a write rule's like ITEM_WRITE) in words: its alternatives joined by or, each one's parts by and."""
+    return ' or '.join(' and '.join(WHO_WORDS[part] for part in alternative.split('+')) for alternative in who)
 
 
 def states_table() -> str:
@@ -443,7 +444,7 @@ def verb_rules(verb: str) -> str:
     rows = [m for m in MOVES if any(m.command == n or m.command.startswith(f'{n} ') for n in names) and group in (None, m.group)]
     if not rows:
         return ''
-    lines = [f"  {m.command}: {m.group} {', '.join(m.frm)} -> {m.to if m.to != '=' else 'same status'}; holder {m.held} -> {m.holds}; who: {who_text(m)}"
+    lines = [f"  {m.command}: {m.group} {', '.join(m.frm)} -> {m.to if m.to != '=' else 'same status'}; holder {m.held} -> {m.holds}; who: {who_text(m.who)}"
              + (f"; guards: {', '.join(m.guards)}" if m.guards else '') + (f"; outcomes: {', '.join(m.outcomes)}" if m.outcomes else '') for m in rows]
     return "rules (the board's transition table; holder: - none, you the caller, * any, = unchanged):\n" + '\n'.join(lines) + '\n\n'
 
@@ -511,14 +512,14 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
     raise fault(f'internal: unknown who part {part}')
 
 
-def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None, board: 'Board | None', agreed: frozenset = frozenset()) -> str | None:
-    """Why the caller may not make this move (the row's `who`), naming who may and, for a hold, whose it is."""
-    if row.who == ('anyone',):
+def authority_refusal(issue: dict, who: tuple[str, ...], command: str, actor: str | None, board: 'Board | None', agreed: frozenset = frozenset()) -> str | None:
+    """Why the caller may not make this move or write (`who`: a row's, or a write rule's), naming who may and, for a hold, whose it is."""
+    if who == ('anyone',):
         return None
     deck = board if board is not None else Board([])
-    if any(all(authority_part(part, issue, actor, deck, agreed) for part in alternative.split('+')) for alternative in row.who):
+    if any(all(authority_part(part, issue, actor, deck, agreed) for part in alternative.split('+')) for alternative in who):
         return None
-    allowed = who_text(row)
+    allowed = who_text(who)
     holder = issue.get('assignee')
     return f"{issue['id']}: {command} is for {allowed}" + (f"; it is held by {holder}" if holder else '')
 
@@ -526,7 +527,7 @@ def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None,
 def table_refusal(board: Board, issue: dict, command: str) -> BoardError | None:
     """The Authority check of `move` for the caller, read before a command writes anything else (the table's Who column is the one owner)."""
     row = next((m for m in MOVES if m.command == command and m.group == group_of(board, issue) and issue['status'] in m.frm), None)
-    why = authority_refusal(issue, row, command, acting(), board) if row else None  # no row: `move` refuses it
+    why = authority_refusal(issue, row.who, command, acting(), board) if row else None  # no row: `move` refuses it
     return refuse('status.row', why) if why else None
 
 
@@ -545,12 +546,12 @@ def record_write_refusal(board: 'Board | None', issue: dict, command: str, actor
     if group_of(board, issue) != ITEM_GROUP:
         if not issue.get('assignee') or issue.get('issue_type') not in HOLDABLE:
             return None
-        return authority_refusal(issue, Move(command, group_of(board, issue), (issue['status'],), '=', '*', '=', rule), command, actor, board)
+        return authority_refusal(issue, rule, command, actor, board)
     cr_id = board.cr_of(issue['id'])
     if not cr_id or cr_id not in board.by_id:
         return None
     cr = board.by_id[cr_id]
-    refusal = authority_refusal(cr, Move(command, ITEM_GROUP, ('open',), '=', '*', '=', rule), command, actor, board)
+    refusal = authority_refusal(cr, rule, command, actor, board)
     if refusal is None:
         return None
     message = (f"{issue['id']}: " + refusal.removeprefix(f'{cr_id}: ')).replace('; it is held by', f'; its change request {cr_id} is held by')
@@ -662,6 +663,9 @@ GUARDS = {  # name -> (its Write-rules cell, the rule: None or why the move is r
         'or wait on the record that keeps the work')),
     'not-superseded': ('supersedes.row', lambda issue, board, reason, outcome, together, who: f'it is superseded by {", ".join(found)}: record a revision to put it back in force (agents board ruling revise {issue["id"]})' if board and (found := superseding(board, issue['id'])) else None),
     'settled-premises': ('status.release-holds', lambda issue, board, reason, outcome, together, who: board and issue['status'] != 'in_force' and release_holds_refusal(board, issue['id'], together)),
+    'no-deferred-target': ('blocks.target', lambda issue, board, reason, outcome, together, who: board and (found := deferred_targets(board, issue['id'], together)) and (
+        f"{', '.join(f'{waiter} waits on {unit}' for waiter, unit in found)}, which is deferred: undefer {' '.join(dict.fromkeys(u for _, u in found))} in the same call "
+        f"(agents board undefer {issue['id']} {' '.join(dict.fromkeys(u for _, u in found))}), or unlink the wait ({'; '.join(dep_fix(w, u) for w, u in found)})")),
     'no-hung-waiters': ('blocks.target', lambda issue, board, reason, outcome, together, who: board and (waiting := deferred_waiters(board, issue['id'], set(together))) and (
         f"{', '.join(waiting)} would hang on it deferred: {deferred_fix(board, issue['id'], waiting)}")),
     'in-work': ('status.row', lambda issue, board, reason, outcome, together, who: None if in_work(issue) else
@@ -705,7 +709,7 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
     who = acting(actor)
     refusal = refuse_held(issue, row, command, who)
     if not refusal and (why := record_write_refusal(board, issue, command, who) if group == ITEM_GROUP
-                        else authority_refusal(issue, row, command, who, board, agreed)):
+                        else authority_refusal(issue, row.who, command, who, board, agreed)):
         refusal = refuse('status.row', why)
     for name in row.guards if not refusal else ():
         cell, rule = GUARDS[name]
@@ -1410,7 +1414,7 @@ class Board:
         self._registry: dict[str, dict] | None = None
         self._unreadable: set[str] = set()
         self._ended: set[str] | None = None
-        self._cr_blockers_read = False
+        self._outside_blockers_read = False
         self.git_view: GitView | None = None  # set by `read_git_view` on a read-only command; dropped when the command changes git state
         self._ref_format: dict[str, bool] = {}
         self._cr: dict[str, dict] = {}  # change request id -> git facts read so far (cr_info)
@@ -1702,13 +1706,14 @@ class Board:
         return [b for m in ([issue['id']] if scope else members) if m in self.by_id and self.is_open(m)
                 for b in self.blockers.get(m, []) if b not in members]
 
-    def fetch_cr_blockers(self) -> None:
-        """Reads the blockers outside the snapshot of every change request in one call, not one per request (a bd call
-        costs ~0.1 s). Those are closed items, and all a change request needs of one is its parents (to lift it to its
+    def fetch_outside_blockers(self) -> None:
+        """Reads the blockers outside the snapshot of every change request and every open record outside one in one call, not one per
+        record (a bd call costs ~0.1 s). Those are closed items, and all a waiter needs of one is its parents (to lift it to its
         request): one list of the closed items, free text omitted, costs ~0.3 s however many blockers there are, where
         `bd show` of them cost ~16 ms each."""
-        if not self.complete and not self._cr_blockers_read:
-            wanted = [b for issue in self.issues if self.is_cr(issue['id']) for b in self.cr_blockers(issue)
+        if not self.complete and not self._outside_blockers_read:
+            wanted = [b for issue in self.issues if self.is_cr(issue['id']) or (self.is_open(issue['id']) and self.cr_of(issue['id']) is None)
+                      for b in (self.cr_blockers(issue) if self.is_cr(issue['id']) else self.blockers.get(issue['id'], []))
                       if b not in self.by_id and not b.startswith('external:')]
             if any(b not in self._loaded and b not in self._outside for b in wanted):
                 for row in bd_closed():
@@ -1716,14 +1721,14 @@ class Board:
                                                                                   if d.get('type') == 'parent-child']))
                     self._closed_blockers[row['id']] = row.get('issue_type')
             self.fetch_outside(wanted)  # what the list lacks (an item that is not closed or not there)
-            self._cr_blockers_read = True  # only a read that worked: a failed one is asked again
+            self._outside_blockers_read = True  # only a read that worked: a failed one is asked again
 
-    def cr_wait_parts(self, issue: dict, *, projected: bool = False) -> tuple[list[str], list[str]]:
-        """Hard waits of the CR itself (a wait on the whole CR) and the candidate stack bases of the CR and its items, before the one-base
-        threshold. What its items wait on holds the items, not the CR (`item_waits`)."""
-        waits, bases = self.wait_parts(issue['id'], self.cr_blockers(issue), projected)
-        own = set(self.wait_parts(issue['id'], self.cr_blockers(issue, scope=True), projected)[0])
-        return [w for w in waits if w in own], bases
+    def cr_wait_parts(self, issue: dict, *, projected: bool = False) -> tuple[list[str], list[str], list[str]]:
+        """Hard waits of the CR itself (a wait on the whole CR), its own candidate stack bases (from those waits) and the candidate stack bases
+        of the CR and its items, before the one-base threshold. What its items wait on holds the items, not the CR (`item_waits`)."""
+        bases = self.wait_parts(issue['id'], self.cr_blockers(issue), projected)[1]
+        waits, own = self.wait_parts(issue['id'], self.cr_blockers(issue, scope=True), projected)
+        return waits, own, bases
 
     def item_waits(self, item: dict, cr_id: str | None = None) -> list[str]:
         """What an open item of a CR still waits on: a sibling that is open, another CR that has not landed (unless its CR stacks on it), a
@@ -1732,7 +1737,8 @@ class Board:
         blockers = self.blockers.get(item['id'], [])
         siblings = [b for b in blockers if self.is_open(b) and self.cr_of(b) == cr_id]
         waits, bases = self.wait_parts(cr_id, [b for b in blockers if b not in siblings], False)
-        return [*siblings, *waits, *(bases if len(self.cr_wait_parts(self.by_id[cr_id])[1]) > 1 else [])]  # a CR stacks on one base only
+        stack = self.cr_waits(self.by_id[cr_id])[1]
+        return [*siblings, *waits, *(b for b in bases if b not in stack)]  # a CR stacks on one base only: another base holds the item
 
     def cr_stuck(self, cr: dict) -> list[str]:
         """What holds an open CR with open items when none of them is ready (the items' unmet waits), else []."""
@@ -1748,7 +1754,7 @@ class Board:
         """The unmet waits and candidate stack bases of `blockers` waited on from the CR `owner`: other CRs unlanded are waits, a stackable one a base."""
         waits: list[str] = []
         bases: list[str] = []
-        self.fetch_cr_blockers()
+        self.fetch_outside_blockers()
         issue = {'id': owner}
         for blocker in dict.fromkeys(blockers):
             record = self.by_id.get(blocker)
@@ -1778,9 +1784,12 @@ class Board:
         return waits, bases
 
     def cr_waits(self, issue: dict) -> tuple[list[str], list[str]]:
-        """A request can start with at most one unlanded stackable base."""
-        waits, bases = self.cr_wait_parts(issue)
-        return (waits + bases, []) if len(bases) > 1 else (waits, bases)
+        """(what holds the CR as a whole, the base it stacks on). A request stacks on at most one unlanded stackable base: its own base (a wait
+        on the whole CR) when it has one, two of them hold it; else its items' one candidate. An item's other base holds only that item (`item_waits`)."""
+        waits, own, bases = self.cr_wait_parts(issue)
+        if len(own) > 1:
+            return waits + own, []
+        return waits, own or (bases if len(bases) == 1 else [])
 
     @cached_property
     def unlocks(self) -> WorkUnlocks:
@@ -1795,8 +1804,12 @@ class Board:
                 if blocker in self.by_id and not planning_wait(self.by_id[blocker])]
 
     def planning_blockers(self, issue: dict) -> list[str]:
-        """The open blockers that hold the item from being claimed."""
+        """The open blockers that hold the item from being claimed. A record outside any CR cannot stack: a wait on another CR's item holds it
+        until that CR lands (model.md Waits), named by the CR."""
         ignored = set(self.foreign_waits(issue))
+        if self.cr_of(issue['id']) is None:
+            waits, bases = self.wait_parts(None, [b for b in self.blockers.get(issue['id'], []) if b not in ignored], False)
+            return [*waits, *bases]
         return [blocker for blocker in self.open_blockers(issue['id']) if blocker not in ignored]
 
     def waits_of(self, issue: dict) -> list[str]:
@@ -1958,7 +1971,7 @@ class WorkUnlocks:
 
     def __init__(self, board: Board):
         self.board = board
-        board.fetch_cr_blockers()
+        board.fetch_outside_blockers()
         if not board.complete:
             board.fetch_outside({blocker for blockers in board.blockers.values() for blocker in blockers
                                  if blocker not in board.by_id and not blocker.startswith('external:')})
@@ -1983,7 +1996,7 @@ class WorkUnlocks:
     def wait_for(self, issue: dict) -> WorkWait:
         board, item_id = self.board, issue['id']
         if issue.get('issue_type') == CR_TYPE:
-            hard, bases = board.cr_wait_parts(issue, projected=True)
+            hard, bases, _ = board.cr_wait_parts(issue, projected=True)  # its own bases: past the threshold once all but one delivered
             if issue['status'] == PASSED and (parent := live_parent(board, issue)):
                 hard.append(parent)
             items = tuple(frozenset(board.item_waits(item, item_id)) for item in board.cr_items(item_id) if item.get('issue_type') != CR_TYPE)
@@ -2602,6 +2615,19 @@ def dropped_targets(board: 'Board', item_id: str) -> list[str]:
     """What the record waits on that closed dropped, itself or with its change request (a complete snapshot: closed records are read)."""
     return [b for b in board.blockers.get(item_id, []) if not b.startswith('external:')
             and (is_dropped_work(board.by_id.get(b)) or is_dropped_work(board.by_id.get(board.cr_of(b) or b)))]
+
+
+def deferred_targets(board: 'Board', item_id: str, together: frozenset[str] = frozenset()) -> list[tuple[str, str]]:
+    """(waiter, deferred unit) of what undeferring the record would leave waiting on a record set aside: a wait of the record, or of an open
+    item of a change request, on a deferred record or an item of a deferred change request, unless that unit is undeferred in the same call."""
+    members = [item_id, *(i['id'] for i in board.cr_items(item_id))] if board.is_cr(item_id) else [item_id]
+    found = []
+    for member in members:
+        for blocker in board.blockers.get(member, []):
+            unit = board.cr_of(blocker) or blocker if blocker in board.by_id else None
+            if unit and unit != item_id and unit not in together and board.by_id.get(unit, {}).get('status') == 'deferred':
+                found.append((member, unit))
+    return list(dict.fromkeys(found))
 
 
 def deviations(board: Board, root: str | None, dropped_targets: set[str] | frozenset[str] = frozenset()) -> list[tuple[str, str, str]]:
@@ -4021,9 +4047,14 @@ def settings_problems(board: Board) -> list[str]:
 MODEL_EXEMPT = {'setup': 'it creates the board, or brings an existing one to the current settings, so the marker cannot be its precondition',
                 'join': 'it fetches a board whose marker travels with the database: a joiner reads an old board, and its writes name /board-migrate'}
 
+def model_value() -> str | None:
+    """The board's model marker, None where no board is (nothing to refuse); MODEL is the current model."""
+    return None if beads_dir() is None else current_setting(MODEL_KEY)
+
+
 def require_model() -> None:
     """Refuses a write on a board that has not been brought to the current model (MODEL_KEY); MODEL_EXEMPT's commands are the writes that need no marker."""
-    if beads_dir() is None or (value := current_setting(MODEL_KEY)) == MODEL:
+    if (value := model_value()) in (None, MODEL):
         return
     if value.isdigit() and int(value) > int(MODEL):
         raise fault(f'this board is on model {value}, newer than this checkout\'s {MODEL}: update the agents checkout. Reads still work')
@@ -4467,16 +4498,15 @@ FOUND_IN = 'found_in'  # metadata of the found item: the item it was found in (a
 OPENED = 'opened_tip'  # metadata of an item open for the user's review: the tip it was opened at (accept.md User review)
 CHECK_KEYS = ('check_at', 'check_base_count', 'check_base_tip', 'check_command', 'check_kind', 'check_new', 'check_output', 'check_reason',
               'check_result', 'check_tip', 'check_tip_count')
-BOARD_METADATA = {  # every metadata key the board writes, the one list (a test compares it with the writes); board check flags any other
-    NO_COMMIT, FOUND_IN, *CR_SETTINGS, HOLD, DEEP_REVIEW, FORCED_BY, FORCED_REASON, SENT_AT, REVISES_RULE, OPENED, DEFERRED_BY, REVISIT, 'outcome',
-    'base', 'base_sha', 'setup_sha', 'since', 'landing', PLAN_FIRST, 'rebase_from', 'rebase_onto', 'review_tip', 'review_base_tip',
-    'reviewing_tip', 'review_edits', AUTHOR, RESUME_NOTE, 'user_seen_tip', 'user_seen_base_tip', 'no_agent_review_reason', *CHECK_KEYS}
 MOVE_KEYS = ('outcome', DEFERRED_BY, REVISIT, HOLD, AUTHOR, RESUME_NOTE)  # meta.move-keys, meta.holder-keys, meta.resume: move's rows write them
 # meta.allowlist: the keys of the model.md meta.* rows whose owners call put_meta; it refuses every other (move's keys, the item settings and
 # send's sent_at: write_fields; found_in: create_plan; legacy keys: board-migrate).
 PUT_META_KEYS = frozenset({'landing', *CHECK_KEYS, 'review_tip', 'review_base_tip', OPENED, 'reviewing_tip', 'review_edits', 'no_agent_review_reason',
                            'user_seen_tip', 'user_seen_base_tip', 'base', 'base_sha', 'rebase_onto', 'rebase_from', PLAN_FIRST, FORCED_BY, FORCED_REASON,
                            'since', 'setup_sha', DEEP_REVIEW, REVISES_RULE})
+ITEM_SETTING_KEYS = (NO_COMMIT, *CR_SETTINGS)  # typed node fields a plan gives; the board stores them as metadata
+# Every metadata key the board writes, the union of its writers' keys (a test compares it with the writes); board check flags any other.
+BOARD_METADATA = frozenset({*MOVE_KEYS, *PUT_META_KEYS, *ITEM_SETTING_KEYS, FOUND_IN, SENT_AT})
 BOARD_REMOTE = 'board'  # the remote the board makes so VS Code shows the request as Outgoing Changes; its push address is disabled
 NO_PUSH = 'no-push://the-board-lands-requests'  # no git-remote-no-push helper exists, so any push through the remote fails
 
@@ -5258,6 +5288,8 @@ def settle_landed(board: Board) -> bool:
         tip = held.get(f"refs/heads/{cr_branch(cr['id'])}")
         fork, m = meta(cr).get('base_sha'), meta(cr)
         if tip and (m.get('landing') == tip or (m.get('check_tip') == tip and bool(fork) and tip != fork)):
+            if model_value() not in (None, MODEL):  # a read on a board of another model writes nothing: the next command after migrate or update finishes it
+                return changed
             board.git_view = None  # finishing a landing (even a failed one) moves branches and worktrees: live reads from here on
             try:
                 for note in finish_landing(board, cr, tip, name, main):
@@ -6346,8 +6378,7 @@ def label_shape_refusal(labels: list[str]) -> str | None:
             'a loose word is topic:<word>') if bad else None
 
 
-def parent_move_refusal(board: Board, ids: list[str], target: str | None, *,
-                        planned_crs: dict[str, str] | None = None, new: dict[str, str] | None = None) -> BoardError | None:
+def parent_move_refusal(board: Board, ids: list[str], target: str | None) -> BoardError | None:
     """Why this reparenting is refused. A change request keeps its place; a work item of one (it is that request's membership, and its
     hold, worktree and pass commit belong to the request) leaves it only while open and unheld; on a shared board the parent decides the
     queue of an item with none of its own, so only lead and solo sessions move it."""
@@ -6493,13 +6524,17 @@ def plan_parents(plan: dict, links: list[tuple[str, str, str]]) -> dict[str, lis
     return parents
 
 
-def wait_cycle(board: Board | None, edges: list[tuple[str, str]], cr_of=None, moved: dict[str, str] | None = None) -> list[str] | None:
+def wait_cycle(board: Board | None, edges: list[tuple[str, str]], planned: dict[str, str] | None = None) -> list[str] | None:
     """The chain an added wait would close into a cycle, [waiter, target, ..., waiter], else None. `edges` are the new (waiter, target) waits; the
     existing ones are the open items' open blockers. A wait on a closed item is met and never part of a cycle. Waits between items of different
     change requests are also followed as waits between those requests (each needs the other to land), so two items waiting on each other's
-    request through different items are a cycle too; `cr_of` places a plan's new items, `moved` {item: change request} the items a move re-parents."""
-    moved = moved or {}
-    place = cr_of or (lambda item: moved.get(item) or (board.cr_of(item) if board and item in board.by_id else None))
+    request through different items are a cycle too. `planned` {item: change request} is the write's one map of membership it changes: a plan's
+    new items and the existing items a plan or move places; every other item stays where the board has it."""
+    planned = planned or {}
+
+    def place(item: str) -> str | None:
+        return planned.get(item) or (board.cr_of(item) if board and item in board.by_id else None)
+
     graph: dict[str, list[str]] = {}
     for waiter, target in edges:
         graph.setdefault(waiter, []).append(target)
@@ -6507,9 +6542,9 @@ def wait_cycle(board: Board | None, edges: list[tuple[str, str]], cr_of=None, mo
     def items(item: str) -> list[str]:
         return [*(board.open_blockers(item) if board and board.is_open(item) else []), *graph.get(item, [])]
 
-    def requests(unit: str) -> list[str]:  # the lifted graph: a request stands for itself and its open items
-        members = [unit, *(i['id'] for i in board.cr_items(unit) if i['id'] not in moved), *(i for i, cr in moved.items() if cr == unit)] \
-            if board and board.is_cr(unit) else [unit]
+    def requests(unit: str) -> list[str]:  # the lifted graph: a request stands for itself and its open items, stored or placed by this write
+        stored = [i['id'] for i in board.cr_items(unit) if i['id'] not in planned] if board and board.is_cr(unit) else []
+        members = [unit, *stored, *(i for i, cr in planned.items() if cr == unit)]
         lifted = [place(b) or b for m in members for b in items(m)]
         return [b for b in dict.fromkeys(lifted) if b != unit]
 
@@ -6548,7 +6583,7 @@ def supersede_who_refusal(board: Board, old: str, actor: str | None) -> BoardErr
     """supersedes.who: writing or removing a supersedes edge, partial or full, takes the `supersede` row's Who (a deciding session or the user)."""
     row = next(m for m in MOVES if m.command == 'supersede')
     issue = board.by_id.get(old) or {'id': old}
-    why = authority_refusal(issue, row, 'ruling supersede', actor, board)
+    why = authority_refusal(issue, row.who, 'ruling supersede', actor, board)
     return refuse('supersedes.who', why) if why else None
 
 
@@ -6576,9 +6611,9 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
     def record_of(item: str) -> dict:
         return planned(item) if item in new else (board.by_id.get(item) if board else None) or {}
 
-    # bd writes the graph together, so both ends of a wait may acquire a CR in the same plan; a move places its items in the new parent.
+    # The write's one map of the membership it changes (S1): bd writes the graph together, so both ends of a wait may acquire a CR in the same
+    # plan, new or existing; a move places its items in the new parent. The cycle and target rules read it.
     planned_crs = {child: parent for child, parent in parent_edges if kind_of(parent) == CR_TYPE}
-    moved = {child: parent for child, parent in parent_edges if child not in new and kind_of(parent) == CR_TYPE}
 
     def cr_of(item: str):
         if kind_of(item) == CR_TYPE:
@@ -6612,6 +6647,10 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
             raise refusal  # cr-stays, leave, queue
         if child not in new and (refusal := record_write_refusal(board, board.by_id[child], 'move', who)):  # an item leaves under its CR's hold
             raise refuse('parent-child.leave' if group_of(board, board.by_id[child]) == ITEM_GROUP else 'held-record.write', refusal)
+        if child not in new and parent_kind == CR_TYPE and board.cr_of(child) is None and ((task := board.by_id[child])['status'] != 'open' or task.get('assignee')):
+            fix = f'agents board undefer {child}' if task['status'] == 'deferred' else f'agents board unclaim {child}'  # enter: after the hold rule, so another's hold is named as such
+            raise refuse('parent-child.enter', f"{child} is {task['status']}{', held by ' + task['assignee'] if task.get('assignee') else ''}: an item of a change "
+                         f'request is neither deferred nor held (its request is); {fix} first, then move it')
         if child in loose:
             raise refuse('parent-child.work-needs-cr', f'{child}: work that commits nothing stands outside any change request: drop --parent, or drop --no-commit to file it in one')
         if (child_kind, parent_kind) not in ((WORK_TYPE, CR_TYPE), (CR_TYPE, 'milestone')):  # kind-fit (nixes-s378b, nixes-7oqkc)
@@ -6632,17 +6671,18 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
                                  f'{deferred_fix(board, child, waiting)}')
         if parent_kind == CR_TYPE and parent not in new:  # item-create: entering a change request is a write to its items (nixes-0an9j)
             cr = board.by_id[parent]
-            if refusal := authority_refusal(cr, Move(verb, ITEM_GROUP, (cr['status'],), '=', '*', '=', ITEM_CREATE), verb, who, board):
+            if refusal := authority_refusal(cr, ITEM_CREATE, verb, who, board):
                 raise refuse('parent-child.item-create', filing_refusal(child, refusal, parent))
 
     waits: Waits = {key: ([], []) for key in new}
     ops = []
     held_up = [(one, key) for one in holds for key, type_ in new.items() if type_ == 'decision']
     cycle_edges = [(waiting, other) for waiting, other, kind in links if blocking(kind)] + held_up
-    if moved and board:  # a re-parented item lifts its waits and waiters to the new change request
+    moved = [child for child in planned_crs if child not in new and board and child in board.by_id]
+    if moved:  # a re-parented item lifts its waits and waiters to the new change request
         cycle_edges += [(child, b) for child in moved for b in board.open_blockers(child)] + \
                        [(w, child) for child in moved for w in board.dependents.get(child, []) if board.is_open(w)]
-    if chain := wait_cycle(board, cycle_edges, cr_of if new else None, moved):  # blocks.cycle, before anything is written
+    if chain := wait_cycle(board, cycle_edges, planned_crs):  # blocks.cycle, before anything is written
         raise refuse('blocks.cycle', f"these waits would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
     for waiting, other, kind in links + [(one, key, WAIT_LINK) for one, key in held_up]:
         if kind in RULING_LINKS and verb not in ('ruling', 'record'):
@@ -6659,7 +6699,7 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
         elif blocking(kind):
             if verb == 'link':
                 raise refuse('blocks.writers', f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
-            if refusal := wait_target_refusal(record_of(waiting) or None, other, record_of(other), board):  # blocks.target, .external, .waiter
+            if refusal := wait_target_refusal(record_of(waiting) or None, other, record_of(other), board, cr_of(other)):  # blocks.target, .external, .waiter
                 raise refusal
             if waiting not in new and board and waiting in board.by_id and (refusal := record_write_refusal(board, board.by_id[waiting], 'wait', who)):
                 raise refuse('blocks.hold' if group_of(board, board.by_id[waiting]) == ITEM_GROUP else 'held-record.wait', refusal)
@@ -6751,7 +6791,6 @@ def apply_waits(made: dict[str | None, str], waits: Waits, types: dict[str, str]
 PLAN_NODE_KEYS = {'key', 'title', 'type', 'description', 'design', 'acceptance_criteria', 'notes', 'priority', 'labels', 'assignee', 'metadata',
                   'parent', 'parent_id', 'parent_key', 'deps', 'spec_id', 'external_ref', 'estimate'}  # the node fields bd's graph reads; it drops others silently
 PLAN_EDGE_KEYS = {'from_key', 'from_id', 'to_key', 'to_id', 'type'}
-ITEM_SETTING_KEYS = (NO_COMMIT, *CR_SETTINGS)  # typed node fields a plan gives; the board stores them as metadata
 GIVEN_NODE_KEYS = PLAN_NODE_KEYS - {'metadata', 'assignee'} | set(ITEM_SETTING_KEYS) | {'waits_on', FOUND_IN}  # a plan's own nodes: metadata and the holder stay the board's
 
 
@@ -6810,12 +6849,13 @@ def plan_with_queue(plan: dict) -> None:
 
 
 def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: list[str] = (), dry_run: bool = False,
-                for_: str | None = None) -> tuple[dict[str, str], Waits, list[tuple[str, str, str]]]:
+                for_: str | None = None, declared: str | None = None, public: bool = False) -> tuple[dict[str, str], Waits, list[tuple[str, str, str]]]:
     """`bd create --graph` of a validated plan, the one creation of records with their links. Every rule of a new record runs here, for every
     creation path (create, create --graph, and create_item's follow-ups, revisions and confirmations), before anything is written: the type
     (issue_type.types), labels (labels.form, queue.route; `for_` is `create --for`), the long fields' size (content.size), the settings
     (setting.values), found_in (meta.found-in), the waits' for comments (comments.size), then edge_rules on the plan's links, parents and
-    `holds` (`board` holds the existing ends; `verb` writes them). Atomic: bd rolls the whole plan back. Works on a copy, so a dry run and the
+    `holds` (`board` holds the existing ends; `verb` writes them); `public`: a `board create` call, whose decisions say what they hold up
+    (require_holds_declared, `declared` its --holds as given), where the board's own creations settled that themselves. Atomic: bd rolls the whole plan back. Works on a copy, so a dry run and the
     real run of one plan judge the same input. Returns ({key: id}, the waits apply_waits writes, the plan's waits_on as (waiter key, target,
     for)); `dry_run`: the checks only, no ids."""
     plan = json.loads(json.dumps(plan))
@@ -6864,6 +6904,8 @@ def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: li
     if for_:
         for_person(plan, for_)
     plan_with_queue(plan)
+    if public:
+        require_holds_declared(waits, types, declared)
     if dry_run:
         return {}, waits, given
     with tempfile.NamedTemporaryFile('w', suffix='.json', encoding='utf-8', delete=False) as handle:
@@ -7140,12 +7182,13 @@ def reason_optional(issue: dict, record: dict) -> bool:
     return record.get('issue_type') in ('decision', 'gate')
 
 
-def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: 'Board | None' = None) -> BoardError | None:
+def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: 'Board | None' = None, owner: str | None = None) -> BoardError | None:
     """The rules about what a wait may name, one owner for every writer (wait, create and plan links, ruling revise and supersede, the protocol
     engine's links): nothing waits on an `external:` reference (it never blocks), on a deferred record (set aside, it would never end) or on one closed dropped (a question excepted: it
     releases its waiters), and an in-force ruling waits only for its planning: a live decision, another in-force ruling until it is planned and closed
     (nixes-r0e01), or a human gate. A new record (in a plan, or a gate
-    being made) has no id: `waiter` and `record` are then what it will be, or `waiter` None when only the target is known."""
+    being made) has no id: `waiter` and `record` are then what it will be, or `waiter` None when only the target is known. `owner`: the change
+    request the write places the target in (edge_rules' planned membership), else the board's."""
     who = waiter.get('id') or f"the new {waiter.get('issue_type')}" if waiter else 'a new item'
     if target.startswith('external:'):  # blocks.external: bd never blocks on one (model.md Waits), so the wait would be met at once
         return refuse('blocks.external', f'{who} cannot wait on {target}: an external reference never blocks; a step outside the board is a human gate '
@@ -7153,7 +7196,7 @@ def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: '
     if waiter and waiter.get('issue_type') == 'milestone':
         return refuse('blocks.waiter', f"{who} is a milestone: it waits on nothing, a change request is part of it "
                       f"(agents board move <change request> --to {waiter.get('id') or '<milestone>'})")
-    unit = (board.cr_of(target) or target) if board and target in board.by_id else target  # an item of a deferred change request is set aside with it
+    unit = owner or ((board.cr_of(target) or target) if board and target in board.by_id else target)  # an item of a deferred change request is set aside with it
     if record.get('status') == 'deferred' or (board and board.by_id.get(unit, {}).get('status') == 'deferred'):
         return refuse('blocks.target', f'{who} cannot wait on {target}: {"it" if unit == target else unit} is deferred, set aside by nothing that would bring it back; '
                       f'undefer it first (agents board undefer {unit}), or wait on the record that would')
@@ -7353,11 +7396,19 @@ def deferred_fix(board: Board, item_id: str, waiting: list[str]) -> str:
     return f"defer {' '.join(waiting)} too, or keep {item_id} undeferred and write the wait as a gate (agents board gate create) or a blocks edge"
 
 
+def calendar_day(text: str) -> bool:
+    """A revisit date: YYYY-MM-DD naming a day that exists (due_deferral compares the text, so 2027-02-31 would come due in March)."""
+    try:
+        return bool(re.fullmatch(r'\d{4}-\d{2}-\d{2}', text)) and bool(date.fromisoformat(text))
+    except ValueError:
+        return False
+
+
 def defer_command(args) -> int:
     """`board defer <id>... --reason "<why>" [--until <date>]`: set aside, blocked by nothing. No date: someday, only `undefer`
     reopens it; a date only surfaces it as due. A deferral records no condition (a condition on an item or event is a wait)."""
-    if args.until and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', args.until):
-        raise bad_input(f'--until takes a day, YYYY-MM-DD: {args.until}')
+    if args.until and not calendar_day(args.until):
+        raise bad_input(f'--until takes a day of the calendar, YYYY-MM-DD: {args.until}')
     board = Board.load('status')
     known_items(board, args.ids)
     by = 'user' if may_attend(board) else session_actor(caller())  # a lead or solo session defers for the user; autopilot's deferral is its own
@@ -7372,10 +7423,15 @@ def defer_command(args) -> int:
 
 
 def undefer_command(args) -> int:
+    """`board undefer <id>...`: back to open. Every id's whole undeferral is checked first; ids undeferred together may wait on each other
+    (blocks.target: guard no-deferred-target)."""
     board = Board.load('status')
     known_items(board, args.ids)
+    together = frozenset(args.ids)
     for item_id in args.ids:
-        move(board.by_id[item_id], 'undefer', board=board, fields={DEFERRED_BY: None, REVISIT: None})
+        move(board.by_id[item_id], 'undefer', board=board, together=together, write=False)
+    for item_id in args.ids:
+        move(board.by_id[item_id], 'undefer', board=board, together=together, fields={DEFERRED_BY: None, REVISIT: None})
         print(f'{item_id}: undeferred')
     return 0
 
@@ -8265,15 +8321,12 @@ def create_command(args) -> int:
     if holds_value is not None and not decides:
         raise bad_input('--holds goes with --type decision: only a question or ruling holds items up')
     named = parse_holds(holds_value) if holds_value is not None else []
-    _, waits, given = create_plan(plan, None, 'create', named, dry_run=True, for_=args.for_)  # every rule before anything is created
-    if decides:
-        require_holds_declared(waits, types, holds_value)
+    made, waits, given = create_plan(plan, None, 'create', named, dry_run=args.dry_run, for_=args.for_, declared=holds_value, public=True)  # every rule, then the write
     if args.dry_run:
         print('valid')
         for waiter, target, why in given:
             print(wait_sentence(waiter, target, why or None))
         return 0
-    made, waits, given = create_plan(plan, None, 'create', named, for_=args.for_)
     for key, item_id in made.items():
         print(item_id if not args.graph else f'{key} {item_id}')
     for waiter, target, why in given:  # the for is kept on the waiter, as board wait keeps it
@@ -8569,7 +8622,9 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--reason', required=True, metavar='TEXT')
     sub.add_argument('--force', action='store_true', help='close an item that is blocked or has open children (bd close --force)')
-    sub.add_argument('--outcome', choices=('done', 'dropped'), help='how an item or task ends: done (default), or dropped when a ruling or a duplicate makes it moot')
+    sub.add_argument('--outcome', choices=tuple(dict.fromkeys(o for m in MOVES if m.command == 'close' for o in m.outcomes)),
+                     help="how it ends, one of its close row's outcomes (the first is the default): an item or task done or dropped (a ruling or a "
+                          'duplicate makes it moot), a question dropped or superseded (another ruling answered it)')
     sub = add('claim', 'claim the next item routed to your role, or the given ids; a work item past your worker cap needs --force', claim, [scope])
     sub.add_argument('ids', nargs='*', type=board_id)
     sub.add_argument('--force', metavar='REASON', type=nonempty,

@@ -145,7 +145,9 @@ intermediate landing.
      request that change request's membership;
    - `defer_until` becomes the `revisit` day and leaves bd; a deferral whose
      reason names a condition (after, until, when, once, waits on, blocked by)
-     and an open record becomes a wait on it, the record open;
+     reopens only when it already waits (a `blocks` link) on an open record;
+     no wait is guessed from the reason's text, and any other such deferral
+     stays deferred and is listed with its candidate ids and links;
    - closed decisions get `superseded` (a supersedes link, or a close reason
      starting "superseded" or "Answered by released"), `planned` (a close reason
      starting "planned") or `dropped` (starting "dropped"); a closed decision
@@ -177,8 +179,6 @@ intermediate landing.
      accepted or dropped with the user's word; for a design, make an ordinary
      question (`-t decision`, sections Question and Decision) for the user, or
      close it as dropped;
-   - a deferral whose condition names no open record, or a wait that became
-     one: wait it on what it needs, or leave it set aside;
    - a deferred blocker (a record waiting on a deferred one): undefer the
      blocker, or drop the wait;
    - a wait that would close a cycle: drop one edge;
@@ -200,7 +200,10 @@ intermediate landing.
 6. **Mark.** `convert-stored-forms.py --mark` writes the marker only with
    nothing left to convert, none of the step 5 forms left (it lists each that
    remains), and `agents board check` clean. Tell the user sessions
-   may resume.
+   may resume. A deferral with a condition that the converter listed is a
+   valid someday record and does not block the mark: right after it, decide
+   each with the user: `agents board wait <id> --on <target> --for "<input>"`,
+   then `agents board undefer <id>`, or leave it deferred.
    Output: `custom.board.model = <MODEL>`.
 
 ## Tracker
