@@ -16043,7 +16043,7 @@ def test_board_rules(root: Path) -> None:
 
 
 TEST_LIMIT = 600  # seconds per test; the slowest takes under a minute alone
-CALL_LIMIT = 60  # seconds for one protocol call (each takes a few): a hang ends with every thread's stack instead of the group's limit
+CALL_LIMIT = 60  # seconds for one protocol call (each takes a few): a hang ends with every thread's stack instead of the test's limit
 TEST_DEADLINE = [None]  # monotonic deadline of the test's limit, re-armed after each call's own
 
 
