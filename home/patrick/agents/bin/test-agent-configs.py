@@ -16042,7 +16042,7 @@ def test_board_rules(root: Path) -> None:
     print(f"board rules: {len(registered)} cases ({ran['run']} run, {ran['static']} static reach, {ran['gap']} open gap) over {len(kinds_run)} cells")
 
 
-TEST_LIMIT = 600  # seconds per test; the slowest takes about 210 alone, twice that under load
+TEST_LIMIT = 600  # seconds per test; the slowest takes under a minute alone
 CALL_LIMIT = 60  # seconds for one protocol call (each takes a few): a hang ends with every thread's stack instead of the group's limit
 TEST_DEADLINE = [None]  # monotonic deadline of the test's limit, re-armed after each call's own
 
@@ -16050,14 +16050,14 @@ TEST_DEADLINE = [None]  # monotonic deadline of the test's limit, re-armed after
 @contextlib.contextmanager
 def call_limit():
     """faulthandler keeps one timer: the call's limit replaces the test's for the call, then the test's is re-armed with what is left."""
-    faulthandler.dump_traceback_later(CALL_LIMIT, exit=True)
+    faulthandler.dump_traceback_later(CALL_LIMIT, exit=True, file=sys.__stderr__)
     try:
         yield
     finally:
         if TEST_DEADLINE[0] is None:
             faulthandler.cancel_dump_traceback_later()
         else:
-            faulthandler.dump_traceback_later(max(1, TEST_DEADLINE[0] - time.monotonic()), exit=True)
+            faulthandler.dump_traceback_later(max(1, TEST_DEADLINE[0] - time.monotonic()), exit=True, file=sys.__stderr__)
 
 
 @pytest.fixture(name="root", scope="session")

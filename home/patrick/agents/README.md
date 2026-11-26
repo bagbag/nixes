@@ -165,7 +165,7 @@ xdist balances them over workers. The switch's build runs only `-m core` (what
 it generates: skills, definitions, rendered sizes) from a source without the
 test-only files; the full validator is `nix flake check` (`checks.agent-configs`),
 the gate to run before staging. The nix sandbox has no `bd`: in-process test
-boards carry empty settings (`bare_deck`) instead of reading them through bd. Each engine part starts on a fresh fixture;
+boards pin their settings (`without_bd`: target empty, the rest fixed) instead of reading them through bd. Each engine part starts on a fresh fixture;
 sections within a part share state in order, so a section that needs an earlier
 one's rounds stays in its part.
 
