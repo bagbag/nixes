@@ -15,7 +15,7 @@ trap 'rm -rf "$dir"' EXIT
 suites=(
   "home/patrick/agents/bin/test-agent-configs.py|nix develop .#agent-tests --command python3 -B -m pytest -q -n auto home/patrick/agents/bin/test-agent-configs.py"
   "home/patrick/agents/bin/test-scratch.py|python3 -B home/patrick/agents/bin/test-scratch.py"
-  # The default groups; --shared (sharing, sync, a bd upgrade) and --migrate (board-migrate, stored forms) run on request: see its docstring.
+  # The default groups; --shared (sharing, sync), --migrate (board-migrate, stored forms) and --upgrade (a bd upgrade) run on request: see its docstring.
   "home/patrick/agents/bin/test-shared-board.py|python3 -B home/patrick/agents/bin/test-shared-board.py"
   "home/patrick/agents/claude/mods/console/tests/check.sh|sh home/patrick/agents/claude/mods/console/tests/check.sh"
 )

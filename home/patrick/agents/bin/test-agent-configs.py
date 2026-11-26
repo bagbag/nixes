@@ -2280,24 +2280,46 @@ def test_shared_board(root: Path) -> None:
                 issue = {"id": "t-x", "issue_type": kind, "status": status, "assignee": None, "metadata": {}}
                 expect((board.authority_refusal(issue, row.who, command, actor, board.Board([])) is None) == (actor != "auto0001"), f"{actor} on {command} of a {group}")
 
-    # The retry: this one error on a shared board, counted on stderr; never a stopped merge, never unshared.
-    def attempts(message, is_shared, code=1):
+    # The retry: a sync's error on a shared board and a lost concurrent write on any, counted on stderr; never a stopped merge.
+    def attempts(message, is_shared, code=1, verb="create", stdout=""):  # message: stderr of the failed call; stdout likewise
         calls, errors = [], io.StringIO()
 
         def fake_run(command, **kwargs):
             calls.append(command)
-            return subprocess.CompletedProcess(command, code if len(calls) == 1 else 0, "", message)
+            first = len(calls) == 1
+            return subprocess.CompletedProcess(command, code if first else 0, stdout if first else "", message)
 
         with patch.object(board.subprocess, "run", fake_run), patch.object(board, "ensure_server", lambda *a: None), \
                 patch.object(board, "bd_env", lambda: {}), patch.object(board.time, "sleep", lambda s: None), \
                 patch.object(board, "shared", SimpleNamespace() if is_shared else None), contextlib.redirect_stderr(errors):
-            board.bd("create", "t")
+            board.bd(*((verb, "--graph", "plan.json") if verb == "create" else (verb, "t")))
         return len(calls), errors.getvalue()
 
     count, said = attempts("Error: foreign key conflicts on commit", True)
     expect(count == 2 and "retry 1 of 4" in said, "the write retry", (count, said))
     expect(attempts("Error: Merge conflict detected", True)[0] == 1, "a stopped merge is not retried")
-    expect(attempts("Error: foreign key conflicts", False)[0] == 1, "an unshared board does not retry")
+    expect(attempts("Error: foreign key conflicts", False)[0] == 1, "an unshared board does not retry a sync's error")
+    count, said = attempts("Error 1213 (40001): serialization failure", False)
+    expect(count == 2 and "retry 1 of 4" in said and "Error 1213" in said, "a lost concurrent write of a create is retried on an unshared board too", (count, said))
+    expect(attempts("Error 1213 (40001): serialization failure", False, verb="update")[0] == 1, "a non-create write failing with 1213 is not replayed")
+    calls = []
+    with patch.object(board.subprocess, "run", lambda command, **kw: calls.append(command) or subprocess.CompletedProcess(command, 1 if len(calls) == 1 else 0, "", "Error 1213 (40001)")), \
+            patch.object(board, "ensure_server", lambda *a: None), patch.object(board, "bd_env", lambda: {}), patch.object(board.time, "sleep", lambda s: None), \
+            patch.object(board, "shared", None), contextlib.redirect_stderr(io.StringIO()):
+        board.bd("create", "t")
+        plain = len(calls)
+        calls.clear()
+        board.bd("--json", "create", "--graph", "plan.json", verb="create")
+    expect(plain == 1, "a plain create failing with 1213 is not replayed (the retry covers the graph create's one sql commit only)", plain)
+    expect(len(calls) == 2, "a graph create behind a global flag (the raw passthrough names the verb) is retried", len(calls))
+    expect(attempts("Error: other failure", False, stdout="issue text: Error 1213 (40001)")[0] == 1, "a 1213 marker in issue text on stdout is not retried")
+    expect(attempts("", False, stdout='{"error": "graph create: sql commit (regular): Error 1213 (40001): serialization failure"}')[0] == 2, "bd's --json error on stdout is retried")
+    calls = []
+    with patch.object(board.subprocess, "run", lambda command, **kw: calls.append(command) or subprocess.CompletedProcess(command, 1, "", "Error 1213 (40001)")), \
+            patch.object(board, "ensure_server", lambda *a: None), patch.object(board, "bd_env", lambda: {}), patch.object(board.time, "sleep", lambda s: None), \
+            patch.object(board, "shared", None), contextlib.redirect_stderr(io.StringIO()):
+        board.bd("create", "--graph", "plan.json")
+    expect(len(calls) == board.WRITE_RETRIES + 1, "the 1213 retry stops after WRITE_RETRIES", len(calls))
 
     # What a command reports, and the reachable state of the wait's locks and files.
     with tempfile.TemporaryDirectory() as directory:
@@ -6341,19 +6363,28 @@ def test_board(root: Path, board_env, part: str) -> None:
                                 or incoming["ovl: base edit of the CR's file"]["files"] != ["ovl.txt"] or incoming["ovl: base edit of the CR's file"]["crFiles"] != ["ovl.txt"] \
                                 or incoming["ovl: base file the CR leaves alone"]["files"] != ["ovl-b.txt"] or incoming["ovl: base file the CR leaves alone"]["crFiles"]:
                             raise ValueError(f"the Accept JSON must list the incoming commits and mark the paths the CR changed too: {acceptance}")
-                        # A no-agent series refreshed over a moved base stays at Accept: the user's seen tip stays, and the delta shows what changed since.
+                        # A no-agent series refreshed over a moved base, through a conflict, stays at Accept: the user's seen tip and the historical agent pair
+                        # stay, and the delta shows what changed since.
                         issues, tip, wt = make_cr("nar", "nar.txt", "x\n")
-                        seen_base = at_main()
+                        seen_base, agent_pair = at_main(), (issues[0]["metadata"]["review_tip"], issues[0]["metadata"]["review_base_tip"])
                         follow = commit(wt, "nar-doc.txt", "doc\n", "nar: documentation-only follow-up")
                         issues[0]["metadata"].update(no_agent_review_reason="documentation only", user_seen_tip=tip, user_seen_base_tip=seen_base, check_tip=follow)
-                        commit(repo_root, "nar-base.txt", "b\n", "nar: unrelated incoming base change")
+                        commit(repo_root, "nar-doc.txt", "main added this file too\n", "nar: incoming base change that conflicts")
+                        fake = Fake(issues)
+                        code, output, errors = invoke(["cr", "refresh", "nar"], fake, "lead0001")
+                        apply_writes(issues, fake)
+                        if code != 1 or "stopped on a conflict" not in errors:
+                            raise ValueError(f"a refresh of the no-agent series must stop at the conflict: {code} {output} {errors}")
+                        Path(wt, "nar-doc.txt").write_text("resolved\n", encoding="utf-8")
+                        git("add", "nar-doc.txt", cwd=wt)
                         fake = Fake(issues)
                         code, output, errors = invoke(["cr", "refresh", "nar"], fake, "lead0001")
                         apply_writes(issues, fake)
                         row = next(c for c in states(issues) if c["id"] == "nar")
                         if code or row["status"] != "passed" or row["acceptance"]["fullChange"] or row["acceptance"]["seenTip"] != tip \
-                                or "documentation-only follow-up" not in (row["acceptance"]["delta"] or ""):
-                            raise ValueError(f"a refreshed no-agent series must stay at Accept with its changed delta: {code} {output} {errors} {row['status']} {row['acceptance']}")
+                                or "documentation-only follow-up" not in (row["acceptance"]["delta"] or "") \
+                                or (issues[0]["metadata"]["review_tip"], issues[0]["metadata"]["review_base_tip"]) != agent_pair:
+                            raise ValueError(f"a resolved no-agent series must stay at Accept with its changed delta and the historical agent pair: {code} {output} {errors} {row['status']} {row['acceptance']} {issues[0]['metadata']}")
                         issues, tip, wt = make_cr("f1new", "f1n.txt", "x\n")
                         commit(wt, "f1n2.txt", "unreviewed\n", "f1: unreviewed commit")
                         _, output, _ = invoke(["cr", "refresh", "f1new"], Fake(issues), "lead0001")
@@ -15516,7 +15547,7 @@ def test_board_rules(root: Path) -> None:
                           ("wait", "cr"): refused(["wait", "r-ms", "--on", "r-cr", "--for", "x"], "milestone", actor=solo),
                           ("gate create", "any"): every(refused(["gate", "create", "--blocks", "r-ms", "--reason", "a person signs"], "milestone", actor=None),
                                                         # an in-force ruling waits for a new human gate
-                                                        wrote(["gate", "create", "--blocks", "r-rule", "--reason", "the user gives the go"], lambda w, f: any(x[:3] == ["gate", "create", "--type=human"] for x in w),
+                                                        wrote(["gate", "create", "--blocks", "r-rule", "--reason", "the user gives the go"], lambda w, f: any(x[:3] == ["gate", "create", "--type=human"] and ["--blocks", "r-rule"] in [x[i:i + 2] for i in range(len(x) - 1)] for x in w),
                                                               issues=[*world(), record("r-gnew", "gate", await_type="human")], actor=None)),
                           ("ruling revise", "holds"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "r-ms"], "milestone", actor=lead),
                           ("ruling release", "any"): refused(RELEASE, "milestone", writes=by_design, actor=lead,
@@ -15724,7 +15755,7 @@ def test_board_rules(root: Path) -> None:
                         ("ruling revise", "label"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "none", "-l", "loose"], "topic:", actor=lead)})
     add("labels.hold", {("update", "label"): refused(["update", "r-item", "--label", "topic:x"], "r-held", actor=agent),
                         ("route", "any"): every(refused(["route", "ben", "r-item"], "r-held", actor=lead, shared=stub),
-                                                wrote(["route", "ben", "r-item"], update_has("r-item", "queue:ben"), actor=solo, shared=stub)),  # the holder routes its own item
+                                                wrote(["route", "ben", "r-item"], update_has("r-item", "--add-label queue:ben", "--remove-label queue:anna"), issues=W(r_item={"labels": ["queue:anna"]}), actor=solo, shared=stub)),  # the holder routes its own item
                         })
     add("held-record.write", {**{("move", "any", kind): (refused(["move", "r-theld", "--to", "r-cr"], "aaaa1111", actor=planner) if kind in ("task", "no-commit")
                                                          else refused(["move", "r-held", "--to", "r-ms"], "solo0001", actor=agent)) for kind in ("task", "no-commit", "cr")},

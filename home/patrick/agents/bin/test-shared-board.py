@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 """The board through real bd, real Dolt servers and real git: what the fake-bd checks in bin/test-agent-configs.py cannot show.
 
-    python3 -B bin/test-shared-board.py [--board <path>] [--shared] [--migrate] [--only <name>,<name>] [--serial] [--seconds <s>] [--soak <s>]
+    python3 -B bin/test-shared-board.py [--board <path>] [--shared] [--migrate] [--upgrade] [--only <name>,<name>] [--serial] [--seconds <s>] [--soak <s>]
 
 The default run (every change request's full check, board-checks.sh) runs the groups any board needs: a board on one clone, setup,
-one change request end to end and the suite's own cleanup. Two sets run on request:
+one change request end to end and the suite's own cleanup. Three sets run on request:
 - `--shared`, the shared-board groups (two clones syncing through a local bare git remote; SHARING): before a board is first shared,
   after a bd upgrade, and when a change touches sharing or sync;
 - `--migrate`, board-migrate's conversion and rehearsal on a board of every earlier stored form (MIGRATION): when a change touches
-  board-migrate or the model's stored forms.
-`--only` runs the named groups, of any set.
+  board-migrate or the model's stored forms;
+- `--upgrade`, the checks of a bd or Dolt upgrade (UPGRADE): the write-retry soak (`--soak <s>` sets its length, default 40) and bd's
+  compare-and-set guards, which the ordinary tiers only see through the fake bd (the soak is a shared-board group, so it also runs the
+  sharing prefix).
+`--only` runs the named groups, of any set; a shared group selected this way also runs `unshared` and `share_join` first, on the clones
+it needs shared.
 
 A run starts each group as its own `--only` run at once (each with its own folder and servers) and prints their results in order;
 `--serial` runs them one after another in this process, building the two clones once.
 
-Every run has a watcher process: however the run ends (a signal, a crash, SIGKILL), its Dolt servers and sync waits stop and its
-folder goes; a parallel run's groups end with it. A start also clears earlier runs whose process is gone (shared-board.* folders in
-/tmp, marked by their `runner.pid`).
+Every run has a watcher process: however the run ends (a signal, a crash, SIGKILL), the watcher stops every process of the user whose
+working directory is the run's folder (commands in flight, sync waits, Dolt servers) and removes the folder; a parallel run's groups
+are runs of their own and end with it. A start also clears earlier runs whose runner.pid (in the shared-board.* folders of /tmp) names
+an ended process. No other process is signalled.
 
-Needs bd and Dolt, which the validator's build sandbox lacks. After a bd upgrade, run the soak too (`--soak 40`, or
-`--only soak`): it is the check that retires the write retry (board WRITE_RETRY_ERROR), so ordinary runs skip it.
+Needs bd and Dolt, which the validator's build sandbox lacks. After a bd upgrade, run `--upgrade`: the soak is the check that retires
+the write retries (board WRITE_RETRY_ERROR and SERIALIZATION_ERROR).
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -39,15 +45,26 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+
+def positive_seconds(text: str) -> float:
+    value = float(text)
+    if not 0 < value < float('inf'):
+        raise argparse.ArgumentTypeError('must be a positive, finite number of seconds')
+    return value
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--board', default=str(HERE / 'board'))
 parser.add_argument('--only', default='')
 parser.add_argument('--seconds', type=float, default=6, help='the sync window and pull interval to test with')
-parser.add_argument('--soak', type=float, default=0, help='seconds of parallel writing; 0 skips the soak unless --only names it')
+parser.add_argument('--soak', type=positive_seconds, default=40, help='seconds of parallel writing in the soak')
 parser.add_argument('--serial', action='store_true', help='run the groups one after another instead of as parallel --only runs')
 parser.add_argument('--shared', action='store_true', help='also run the shared-board groups (SHARING)')
 parser.add_argument('--migrate', action='store_true', help='also run board-migrate\'s groups (MIGRATION)')
+parser.add_argument('--upgrade', action='store_true', help='also run the checks of a bd or Dolt upgrade (UPGRADE)')
 parser.add_argument('--idle', action='store_true', help='internal (the cleanup test): start up, then wait for a signal')
+parser.add_argument('--parallel', action='store_true', help='internal (the cleanup test): run the --only groups as parallel runs')
 parser.add_argument('--watch', action='store_true', help='internal: the watcher of the run whose folder SB_WATCH_ROOT names')
 parser.add_argument('--linked', action='store_true', help='internal: a parallel run\'s group; its stdin closing means the run is gone')
 options = parser.parse_args()
@@ -80,9 +97,10 @@ def base_env(side: str, window: float | None = None) -> dict[str, str]:
 
 def raw(side: str, *args: str, timeout: float = 200, window: float | None = None):
     """bd without --readonly, through `board bd --raw --yes`: setup and maintenance no board verb offers (an explicit id, dolt, sync, sql, delete)."""
+    started = time.monotonic()
     result = subprocess.run([sys.executable, '-B', BOARD, 'bd', '--raw', '--yes', *args], cwd=ROOT / side, capture_output=True, text=True, timeout=timeout,
                             env={**base_env(side, window), 'BD_NO_REMOTE_ADOPT': '1'}, input='')
-    return result.returncode, result.stdout, result.stderr, 0.0
+    return result.returncode, result.stdout, result.stderr, time.monotonic() - started
 
 
 def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = None, timeout: float = 200, window: float | None = None):
@@ -91,14 +109,15 @@ def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = No
     env = base_env(side, window)
     if role:
         env['CLAUDE_CODE_SESSION_ID'] = session(side, role)
-    started = time.time()
+    started = time.monotonic()
     try:
         result = subprocess.run([sys.executable, '-B', BOARD, *args], cwd=ROOT / side, capture_output=True, text=True, timeout=timeout,
                                 env=env, input=stdin if stdin is not None else '')
     except subprocess.TimeoutExpired:
-        return 124, '', 'timeout', time.time() - started
-    retries['retried'] += result.stderr.count('foreign key conflicts')
-    return result.returncode, result.stdout, result.stderr, time.time() - started
+        return 124, '', 'timeout', time.monotonic() - started
+    retries['sync'] += result.stderr.count('met a sync (')  # board's own line per retry (bd()), not bd's error text
+    retries['concurrent'] += result.stderr.count('met a concurrent write (')
+    return result.returncode, result.stdout, result.stderr, time.monotonic() - started
 
 
 def set_field(side: str, item: str, field: str, text: str, role: str | None = 'lead'):
@@ -173,13 +192,8 @@ def wait_until(test, seconds: float, step: float = 0.5) -> bool:
 
 
 def waits() -> list[int]:
-    out = subprocess.run(['pgrep', '-f', '_sync-wait'], capture_output=True, text=True).stdout.split()
-    found = []
-    for pid in out:
-        cwd = subprocess.run(['lsof', '-a', '-p', pid, '-d', 'cwd', '-Fn'], capture_output=True, text=True).stdout
-        if str(ROOT) in cwd or f'/private{ROOT}' in cwd:
-            found.append(int(pid))
-    return found
+    """This run's sync waits: the detached `board _sync-wait` processes running in the run's folder."""
+    return [pid for pid in in_folder(ROOT) if '_sync-wait' in command_of(pid)]
 
 
 def setup() -> None:
@@ -231,7 +245,7 @@ def mark(side: str) -> dict:
         return {}
 
 
-CLOSED: list[str] = []
+CLOSED: list[str] = []  # the closed top-level records on clone a before it is shared (unshared's, and cr's landed change request when cr ran first)
 
 
 def t_unshared() -> None:
@@ -279,12 +293,12 @@ def t_share_join() -> None:
     held = next(i for i, issue in items('a').items() if issue.get('title') == 'unshared parent')
     run('a', 'claim', held, role='solo')
     rc, out, err, _ = run('a', 'share', '--yes', role='lead')  # another live session holds a top-level record: share's first label passes the hold rule (nixes-3se1p)
-    check(rc == 0 and 'queue:anna' in items('a')[held].get('labels', []) and '3 top-level' in out, "share: another session's held top-level record is labelled", err + out)
+    check(rc == 0 and 'queue:anna' in items('a')[held].get('labels', []) and f'{2 + len(CLOSED)} top-level' in out, "share: another session's held top-level record is labelled", err + out)
     run('a', 'unclaim', held, '--resume', 'held across the share', role='solo')
     rc, out, err, _ = run('a', 'share', '--yes', role=None)
     check(rc == 0 and mark('a').get('remote') == 'origin', 'share --yes: default remote is the project repository, marked shared after the push', err + out)
-    check('queue:anna' in items('a')[held].get('labels', []) and '0 top-level' in out, 'share: existing top-level unlabelled items go to the sharer (the parent, the closed item and the decision record, which has no parent: 3, in the lead\'s share above)', out)
-    check('queue:anna' in items('a')[CLOSED[0]].get('labels', []), 'share: closed top-level items are labelled too')
+    check('queue:anna' in items('a')[held].get('labels', []) and '0 top-level' in out, 'share: existing top-level unlabelled items go to the sharer (the parent, the closed item and the decision record, which has no parent: 3, and the change request of cr when it ran first, in the lead\'s share above)', out)
+    check(all('queue:anna' in items('a')[closed].get('labels', []) for closed in CLOSED), 'share: closed top-level items are labelled too')
     rc, out, err, _ = run('a', 'share', role=None)
     check(rc == 0 and '0 top-level' in out and 'git emails' not in out, 'share again: quiet, nothing relabelled', err + out)
     rc, out, err, _ = run('a', 'share', f'git+file://{ROOT}/empty.git', role=None)
@@ -569,9 +583,9 @@ def t_window() -> None:
     # A burst is judged against an open window, so it runs under one no machine load can outlast (a window of options.seconds closes before six
     # bd calls return on a loaded machine); close_window then starts the window under test.
     open_window = 600
-    rc, _, err, took = raw('a', 'create', 'burst first', '-t', 'task', '--description', 'x', '--silent', window=open_window)
-    check(took < open_window / 2, f'a write returns at once with the wait detached ({took:.1f} s)', took)  # an attached wait would hold the call for the whole window
-    made = [raw('a', 'create', f'burst {n}', '-t', 'task', '--description', 'x', '--silent', window=open_window)[1].strip() for n in range(5)]  # board create commits per call; the window is about bd's own writes
+    rc, first, err, took = raw('a', 'create', 'burst first', '-t', 'task', '--description', 'x', '--silent', window=open_window)
+    check(rc == 0 and took < open_window / 2, f'a write returns at once with the wait detached ({took:.1f} s)', (rc, err, took))  # an attached wait would hold the call for the whole window
+    made = [first.strip()] + [raw('a', 'create', f'burst {n}', '-t', 'task', '--description', 'x', '--silent', window=open_window)[1].strip() for n in range(5)]  # board create commits per call; the window is about bd's own writes
     check(len(waits()) == 1, 'one wait for the board', waits())
     check(commits('a') == before, 'writes stay uncommitted during the window')
     started = close_window()
@@ -664,7 +678,7 @@ def t_soak() -> None:
     expected: dict[str, str] = {}
     errors = collections.Counter()
     lock = threading.Lock()
-    end = time.time() + (options.soak or 40)
+    end = time.time() + options.soak
     count = [0]
 
     def writer(side: str, number: int) -> None:
@@ -691,8 +705,9 @@ def t_soak() -> None:
     threads = [threading.Thread(target=writer, args=(side, k)) for side in 'ab' for k in (1, 2, 3)]
     [t.start() for t in threads]
     [t.join() for t in threads]
+    check(expected, 'parallel writers: at least one create succeeded')
     check(not errors, f'parallel writers: {count[0]} creates without an error', dict(errors))
-    print(f'  note: {retries["retried"]} foreign key retries so far', flush=True)
+    print(f'  note: {retries["sync"]} foreign key and {retries["concurrent"]} concurrent-write (1213) retries so far', flush=True)
     wait_until(lambda: not waits(), options.seconds * 4)
     settle('a', 'b')
     a_items, b_items = items('a'), items('b')
@@ -898,7 +913,7 @@ def t_inbox() -> None:
 
 
 def t_cr() -> None:
-    """One change request end to end on clone a's board, through real bd and real git: claim (worktree, branch, recorded
+    """One change request end to end on clone a, a board that is not shared (cr runs before share_join), through real bd and real git: claim (worktree, branch, recorded
     base), a worker's item closed with its pass commit, hand-over (checks, stored pair), another session's review, and the Accept that
     lands it. The rules on each step are the fake-bd suite's (test-agent-configs.py test_board crs parts)."""
     side = ROOT / 'a'
@@ -909,6 +924,7 @@ def t_cr() -> None:
         return items('a')[cr].get('metadata') or {}
 
     cr = create('a', 'change request A')
+    CLOSED.append(cr)  # landed below
     item = run('a', 'create', 'A item', '-t', 'task', '--parent', cr, '--description-file', '-', stdin='x')[1].strip().splitlines()[-1]
     main_tip = git('rev-parse', target, cwd=side).strip()
     rc, out, err, _ = run('a', 'claim', cr, role='agent')
@@ -1105,8 +1121,7 @@ def t_rehearse() -> None:
 
     def leftovers() -> list[str]:
         """What a rehearsal of this run leaves: its folder, or a process running in it (its dolt server)."""
-        running = subprocess.run(['pgrep', '-f', str(scratch)], capture_output=True, text=True).stdout.split()
-        return [str(p) for p in scratch.glob('board-rehearsal-*')] + running
+        return [str(p) for p in scratch.glob('board-rehearsal-*')] + [str(pid) for pid in in_folder(scratch)]
 
     def migrate(*flags: str):
         result = subprocess.run([sys.executable, '-B', str(MIGRATE_SCRIPT), *flags], cwd=ROOT / side, capture_output=True, text=True, env={**base_env(side), 'TMPDIR': str(scratch)}, input='')
@@ -1118,6 +1133,37 @@ def t_rehearse() -> None:
           and f"{ids['ratify']}" in out.split('--- conversion')[0] and items(side) == before and not leftovers(),
           'migrate: --rehearse converts a copy in a temporary board, shows the open ratification that blocks its mark, and writes nothing here', (leftovers(), items(side) == before, err + out[-300:]))
 
+    def killed_at(window: str) -> list[str]:
+        """A rehearsal that gets its SIGTERM at an exact point (the converter shields both with a signal mask): right after its folder is made,
+        or right after `board setup` is spawned (which then starts the copy's server). Its tree has ended when nothing runs in the
+        rehearsal's folder any more; what it leaves is then that folder or a process in it."""
+        hook = (f'import os, runpy, signal, subprocess, sys, tempfile\n'
+                f'window, script = {window!r}, {str(MIGRATE_SCRIPT)!r}\n'
+                'term = lambda: os.kill(os.getpid(), signal.SIGTERM)\n'
+                'made = tempfile.mkdtemp\n'
+                'def mkdtemp(*a, **k):\n'
+                '    folder = made(*a, **k)\n'
+                '    if window == "folder": term()\n'
+                '    return folder\n'
+                'tempfile.mkdtemp = mkdtemp\n'
+                'spawn = subprocess.Popen\n'
+                'class Popen(spawn):\n'
+                '    def __init__(self, args, *a, **k):\n'
+                '        super().__init__(args, *a, **k)\n'
+                '        if window == "setup" and list(args)[1:2] == ["setup"]: term()\n'
+                'subprocess.Popen = Popen\n'
+                'sys.argv = [script, "--rehearse"]\n'
+                'runpy.run_path(script, run_name="__main__")\n')
+        child = subprocess.Popen([sys.executable, '-B', '-c', hook], cwd=ROOT / side, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                 env={**base_env(side), 'TMPDIR': str(scratch)})
+        _, err = child.communicate(timeout=300)
+        ended = wait_until(lambda: not in_folder(scratch), 120)
+        return ([f'exit {child.returncode}: {err[-300:]}'] if child.returncode != -signal.SIGTERM and child.returncode != 143 else []) + ([] if ended else ['its tree is still running']) + leftovers()
+
+    for window in ('folder', 'setup'):
+        seen = killed_at(window)
+        check(not seen, f'migrate: a rehearsal that gets SIGTERM right after its {window} step leaves no folder and no server', seen)
+
 
 def t_migrate() -> None:
     """board-migrate's conversion on a board holding every old form: refused writes and open reads before, a dry run that writes nothing,
@@ -1126,7 +1172,7 @@ def t_migrate() -> None:
     ids = old_form_board(side)
 
     def migrate(*flags: str):
-        result = subprocess.run([sys.executable, '-B', str(MIGRATE_SCRIPT), *flags], cwd=ROOT / side, capture_output=True, text=True, env=base_env(side), input='')
+        result = subprocess.run([sys.executable, '-B', str(MIGRATE_SCRIPT), *flags], cwd=ROOT / side, capture_output=True, text=True, env={**base_env(side), 'TZ': 'UTC'}, input='')  # the expected defer date holds in UTC only
         return result.returncode, result.stdout, result.stderr
 
     rc, out, err, _ = run(side, 'update', ids['bug'], '--title', 'a bug item, retitled', role=None)
@@ -1134,6 +1180,8 @@ def t_migrate() -> None:
     rc, out, err, _ = run(side, 'show', ids['bug'])
     check(rc == 0 and 'a bug item' in out and 'retitled' not in out, 'migrate: reads work on the old board', err + out)
     before = items(side)
+    check(before[ids['dated']].get('defer_until') and before[ids['dated_live']].get('defer_until'), 'migrate: the import kept both defer_until dates, the stale one of a live record included',
+          (before[ids['dated']].get('defer_until'), before[ids['dated_live']].get('defer_until')))
     rc, out, err = migrate()
     check(rc == 0 and out.count('would: ') >= 20 and items(side) == before, 'migrate: the dry run lists the conversions and writes nothing', err + out)
     rc, out, err = migrate('--mark')
@@ -1286,25 +1334,56 @@ def t_migrate() -> None:
     check(rc == 0, 'migrate: a write verb works once the marker is set', err + out)
 
 
-def cleanup() -> None:
-    """Ends this run's sync waits and every process with its folder on the command line (its Dolt servers, a rehearsal's), then
-    removes the folder. The watcher calls it too, however the run ended."""
-    for pid in waits():
-        with contextlib.suppress(ProcessLookupError):  # a wait that ended since it was listed
-            os.kill(pid, signal.SIGKILL)
-    stop_processes(ROOT.name)
-    shutil.rmtree(ROOT, ignore_errors=True)
+def in_folder(folder: Path) -> list[int]:
+    """The user's processes, other than this one, whose working directory is the folder or under it (lsof prints real paths)."""
+    root = str(folder.resolve())
+    scan = subprocess.run(['lsof', '-a', '-u', str(os.getuid()), '-d', 'cwd', '-Fpn'], capture_output=True, text=True)
+    if not scan.stdout:  # the user's own processes (this one included) always have a cwd: no output is a failed scan, not an empty folder
+        raise OSError(f'lsof found no processes: {scan.stderr.strip()}')
+    found, pid = [], 0
+    for line in scan.stdout.splitlines():
+        if line.startswith('p'):
+            pid = int(line[1:])
+        elif line.startswith('n') and pid != os.getpid() and (line[1:] == root or line[1:].startswith(root + '/')):
+            found.append(pid)
+    return found
 
 
-def stop_processes(folder: str) -> None:
-    """SIGTERM, then SIGKILL, to every process whose command line names /tmp/<folder>/."""
-    pids = [int(pid) for pid in subprocess.run(['pgrep', '-f', f'/{folder}/'], capture_output=True, text=True).stdout.split() if int(pid) != os.getpid()]
-    for sig in (signal.SIGTERM, signal.SIGKILL):
+def command_of(pid: int) -> str:
+    return subprocess.run(['ps', '-o', 'command=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+
+
+def stop_folder(folder: Path) -> bool:
+    """Whatever runs in the folder (its commands, sync waits and Dolt servers) ends: SIGTERM, a short wait, then SIGKILL, rescanning each round.
+    Whether the final scan found nothing."""
+    for sig in (signal.SIGTERM, signal.SIGKILL, signal.SIGKILL):
+        pids = in_folder(folder)
+        if not pids:
+            return True
         for pid in pids:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, sig)
-        if wait_until(lambda: not any(alive(pid) for pid in pids), 5, 0.2):
-            break
+        if wait_until(lambda: not in_folder(folder), 3, 0.2):
+            return True
+    return not in_folder(folder)
+
+
+def remove_folder(folder: Path) -> None:
+    """Stops what runs in the folder, then removes it; with processes left, the folder and its runner.pid stay for a later start's sweep."""
+    try:
+        stopped = stop_folder(folder)
+        left = '' if stopped else f'processes {in_folder(folder)} would not end'
+    except OSError as error:
+        stopped, left = False, str(error)
+    if stopped:
+        shutil.rmtree(folder, ignore_errors=True)
+    else:
+        print(f'{folder}: {left}; the folder stays for a later sweep', flush=True)
+
+
+def cleanup() -> None:
+    """Stops what runs in this run's folder, then removes it."""
+    remove_folder(ROOT)
 
 
 def alive(pid: int) -> bool:
@@ -1314,70 +1393,139 @@ def alive(pid: int) -> bool:
 
 
 def clear_dead_runs() -> None:
-    """Stops the processes and removes the folder of every earlier run whose process is gone: its folder's runner.pid names no live
-    process. A folder without one (or a server whose folder is gone) belongs to a run of an older script, cleared only when no other
-    test-shared-board.py runs. Another live run's stay."""
-    ps = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True, text=True).stdout
-    runners = any('test-shared-board.py' in row and '--watch' not in row and row.split(maxsplit=1)[0] != str(os.getpid()) for row in ps.splitlines())
-    names = {path.name for path in Path('/tmp').glob('shared-board.*')} | set(re.findall(r'/tmp/(shared-board\.[^/\s]+)/', ps))
-    for name in sorted(names - {ROOT.name}):
+    """Stops what runs in, and removes, the folder of every earlier run whose runner.pid names a process that has ended. A folder without
+    a runner.pid is nobody's to clear, a live run's stays."""
+    for folder in sorted(Path('/tmp').glob('shared-board.*')):
         try:
-            owner = int((Path('/tmp') / name / RUNNER_PID).read_text().strip())
-        except (OSError, ValueError):
-            owner = None
-        if alive(owner) if owner else runners:
+            status = folder.lstat()  # a symlink or a folder of another user is no run of this suite: its target is never scanned
+            if not stat.S_ISDIR(status.st_mode) or status.st_uid != os.getuid():
+                continue
+            owner = int((folder / RUNNER_PID).read_text().strip())
+        except (OSError, ValueError):  # also a folder a parallel start has just removed
             continue
-        stop_processes(name)
-        shutil.rmtree(Path('/tmp') / name, ignore_errors=True)
+        if folder.name == ROOT.name or alive(owner):
+            continue
+        remove_folder(folder)
 
 
 CHILDREN: list[subprocess.Popen] = []  # a parallel run's group runs
 
 
 def on_signal(signum, frame) -> None:
+    raise SystemExit(128 + signum)  # unwinds to the finally blocks, which stop the children and clean up outside the handler
+
+
+def stop_children() -> None:
+    """Each group still running gets SIGTERM (it stops its servers and removes its folder), a bounded wait, then SIGKILL."""
     for child in CHILDREN:
         if child.poll() is None:
-            child.send_signal(signal.SIGTERM)  # each child stops its servers and removes its folder
+            child.send_signal(signal.SIGTERM)
+    deadline = time.monotonic() + 30
     for child in CHILDREN:
         try:
-            child.wait(30)
+            child.wait(max(0.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             child.kill()
-    cleanup()
-    sys.exit(128 + signum)
+            child.wait()
 
 
 def run_parallel(groups: list[str]) -> int:
     """Each group as its own --only run (unshared and share_join run inside each); output in ORDER, then one verdict."""
     args = ['--board', BOARD, '--seconds', str(options.seconds), '--soak', str(options.soak)]
     outputs = {}
-    for name in groups:
-        out = tempfile.TemporaryFile('w+', encoding='utf-8')
-        CHILDREN.append(subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--only', name, '--linked', *args],
-                                         stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT, text=True))
-        outputs[name] = out
     failed = []
-    for name, child in zip(groups, CHILDREN):
-        code = child.wait()
-        out = outputs[name]
-        out.seek(0)
-        text = out.read()
-        out.close()
-        marker = f'## {name}\n'
-        print(text[text.index(marker):] if marker in text and code == 0 else text, end='' if text.endswith('\n') else '\n', flush=True)
-        if code != 0:
-            failed.append(name)
+    try:
+        for name in groups:
+            out = tempfile.TemporaryFile('w+', encoding='utf-8')
+            CHILDREN.append(subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--only', name, '--linked', *args],
+                                             stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT, text=True))
+            outputs[name] = out
+        for name, child in zip(groups, CHILDREN):
+            code = child.wait()
+            out = outputs[name]
+            out.seek(0)
+            text = out.read()
+            out.close()
+            marker = f'## {name}\n'
+            print(text[text.index(marker):] if marker in text and code == 0 else text, end='' if text.endswith('\n') else '\n', flush=True)
+            if code != 0:
+                failed.append(name)
+    finally:
+        stop_children()
     print(f"FAILED groups: {', '.join(failed)}" if failed else 'all groups passed', flush=True)
     return 1 if failed else 0
 
 
+def t_guards() -> None:
+    """bd's compare-and-set guards through real bd, which the fake bd of test-agent-configs.py only simulates: a second guarded take is
+    refused, two forced gate closers have one winner, two claims of a change request leave the winner's branch and worktree."""
+    side = ROOT / 'a'
+
+    def row(item: str) -> dict:
+        return items('a')[item]
+
+    def task(cr: str, title: str) -> str:
+        return run('a', 'create', title, '-t', 'task', '--parent', cr, '--description-file', '-', stdin='x')[1].strip().splitlines()[-1]
+
+    def together(call, roles: tuple[str, str]) -> dict:
+        results: dict = {}
+        threads = [threading.Thread(target=lambda role=role: results.__setitem__(role, call(role))) for role in roles]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        return results
+
+    guarded = create('a', 'guards: the guard itself', '--no-commit', kind='task')
+    first = raw('a', 'update', guarded, '--assignee', 'closer-one', '--if-assignee', '', '--if-status', 'open', '--json')
+    second = raw('a', 'update', guarded, '--assignee', 'closer-two', '--if-assignee', '', '--if-status', 'open', '--json')
+    check(first[0] == 0 and second[0] == 13 and row(guarded).get('assignee') == 'closer-one',
+          'guards: a second take of an unheld record is refused by the guard, exit 13, and the first assignee stays', (first[0], second[0], second[2]))
+    raced = create('a', 'guards: two closers at once')
+    task(raced, 'the item')
+    run('a', 'gate', 'create', '--blocks', raced, '--reason', 'guards: a gate two sessions resolve at once')
+    gate = next((one['id'] for one in items('a').values() if one.get('issue_type') == 'gate' and one['status'] != 'closed'), None)
+    outcomes = together(lambda role: run('a', 'gate', 'resolve', gate, role=role)[:3:2], ('lead', 'solo'))
+    check(gate and sorted(code == 0 for code, _ in outcomes.values()) == [False, True] and row(gate)['status'] == 'closed',
+          'guards: exactly one of two forced gate closers wins', outcomes)
+    race = create('a', 'guards: two claims at once')
+    task(race, 'the item')
+    results = together(lambda role: run('a', 'claim', race, role=role)[0], ('agent', 'solo'))
+    holder = row(race).get('assignee')
+    check(sorted(results.values()) == [0, 1] and holder and holder.startswith(session('a', next(role for role, code in results.items() if code == 0))[-8:])
+          and (side / '.worktrees' / race).is_dir() and git('branch', '--list', f'cr/{race}', cwd=side).strip(),
+          "guards: exactly one claim wins, and the winner's branch and worktree survive the loser's claim", (results, holder))
+
+
+def t_busy() -> None:
+    """Internal (the cleanup test): the board's server is up and a command of the run is held in flight, one that does not end with the server."""
+    subprocess.run([sys.executable, '-c', 'import time; time.sleep(300)', 'held-command'], cwd=ROOT / 'a', timeout=600)
+
+
 def t_cleanup() -> None:
-    """A signalled run removes its folder; a start stops the servers of dead runs and leaves a live run's."""
-    def fake_server(folder: Path):
-        return subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)', 'dolt', 'sql-server', f'{folder}/a/.beads/dolt'])
+    """A signalled run removes its folder; a killed run's watcher stops what runs in its folder (a command in flight, its server) and removes it,
+    a killed parallel run's groups end likewise; a start stops what runs in the folders of dead runs and leaves a live run's."""
+    me = str(Path(__file__).resolve())
+
+    def start(*flags: str, stdout=subprocess.DEVNULL) -> subprocess.Popen:
+        return subprocess.Popen([sys.executable, '-B', me, '--board', BOARD, *flags], stdout=stdout, text=True)
+
+    def fake_server(folder: Path) -> subprocess.Popen:
+        return subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)', 'dolt', 'sql-server', f'{folder}/a/.beads/dolt'], cwd=folder)
+
+    def folder_of(pid: int, parent: int | None = None) -> Path | None:
+        """The folder of the run `pid` (or, with `parent`, of the run that parent started)."""
+        for path in Path('/tmp').glob(f'shared-board.*/{RUNNER_PID}'):
+            try:
+                run_pid = int(path.read_text().strip() or 0)
+            except (FileNotFoundError, NotADirectoryError):  # a start's sweep removed the folder between the glob and the read
+                continue
+            if run_pid == pid or parent and command_of(run_pid) and subprocess.run(['ps', '-o', 'ppid=', '-p', str(run_pid)], capture_output=True, text=True).stdout.strip() == str(parent):
+                return path.parent
+        return None
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--idle', '--board', BOARD], stdout=subprocess.PIPE, text=True)
+        child = start('--idle', stdout=subprocess.PIPE)
         folder = Path((child.stdout.readline().split(maxsplit=1) or ['', ''])[1].strip() or '/nonexistent')
         check(folder.is_dir() and (folder / RUNNER_PID).read_text() == str(child.pid), f'{sig.name}: the run has its folder', folder)
         child.send_signal(sig)
@@ -1387,71 +1535,102 @@ def t_cleanup() -> None:
             child.kill()
             code = None
         check(code == 128 + sig and not folder.exists(), f'{sig.name}: the run exits and removes its folder', (code, folder.exists()))
-    dead, live, bare = (Path('/tmp') / f'shared-board.cleanuptest-{name}' for name in ('dead', 'live', 'bare'))
-    for folder in (dead, live, bare):
-        folder.mkdir(exist_ok=True)
-    (live / RUNNER_PID).write_text(str(os.getpid()))
-    (dead / RUNNER_PID).write_text('999999')  # no such process
-    servers_of = {'dead': fake_server(dead), 'live': fake_server(live), 'bare': fake_server(bare)}
-    try:
-        time.sleep(0.5)  # the interpreters are up with their arguments
-        child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--idle', '--board', BOARD], stdout=subprocess.PIPE, text=True)
+
+    # SIGKILL while a command holds the board's server (the busy group is set up, then holds a command): nothing of the run may be left.
+    for name, flags, linked in (('a killed run', ('--only', 'busy'), False), ('a killed parallel run', ('--only', 'busy', '--parallel'), True)):
+        victim = start(*flags)
+        try:
+            def held() -> Path | None:
+                """The folder of the run holding the command: the victim's own, or the --linked group's it started."""
+                folder = folder_of(0, victim.pid) if linked else folder_of(victim.pid)
+                return folder if folder and any('held-command' in command_of(pid) for pid in in_folder(folder)) else None
+
+            ready = wait_until(lambda: held() is not None, 300, 1)
+            folder = held()
+            folders = [path for path in (folder_of(victim.pid), folder) if path]
+            check(ready and any('sql-server' in command_of(pid) for pid in in_folder(folder)), f'{name}: a command is in flight on a started server', (ready, folders))
+            victim.kill()
+            victim.wait()
+            left = lambda: [in_folder(path) for path in folders] + [path for path in folders if path.exists()]
+            check(wait_until(lambda: not any(left()), 60, 1), f'{name}: its commands, servers and folders are gone', left())
+        finally:
+            victim.kill()
+            victim.wait()
+    tag = ROOT.name  # unique to this run, so another run's fixtures and ours never meet
+    dead, live, bare, near = (Path('/tmp') / f'{tag}-{name}' for name in ('dead', 'live', 'bare', 'deadx'))  # near: a sibling folder of dead's prefix
+    fakes: dict[str, subprocess.Popen] = {}
+    try:  # entered before the first allocation: whatever is made is removed
+        for folder in (dead, live, bare, near):
+            folder.mkdir()
+        reaped = subprocess.Popen([sys.executable, '-c', 'pass'])
+        reaped.wait()
+        for name, folder in (('dead', dead), ('live', live), ('bare', bare), ('near', near)):
+            fakes[name] = fake_server(folder)  # recorded one by one: a later spawn that fails leaves the earlier ones to the finally
+        fakes['decoy'] = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)', f'{dead}/notes.log'])  # names the dead folder, runs elsewhere
+        check(wait_until(lambda: all(in_folder(folder) for folder in (dead, live, bare, near)), 30, 0.2), 'the fixture servers are up')
+        (dead / RUNNER_PID).write_text(str(reaped.pid))  # a process that has ended and been reaped; written once the processes run, so no sweep meets a half-built fixture
+        (live / RUNNER_PID).write_text(str(os.getpid()))
+        child = start('--idle', stdout=subprocess.PIPE)
         child.stdout.readline()
         child.send_signal(signal.SIGTERM)
         child.wait(30)
-        check(wait_until(lambda: servers_of['dead'].poll() is not None, 5), 'start: a dead run\'s server is stopped')
-        check(servers_of['live'].poll() is None, 'start: a live run\'s server is left')
-        check(servers_of['bare'].poll() is None, 'start: a folder without runner.pid is left while another run (this one) is going')
+        check(wait_until(lambda: fakes['dead'].poll() is not None and not dead.exists(), 10), "start: a dead run's server is stopped and its folder removed")
+        check(fakes['live'].poll() is None and live.exists(), "start: a live run's server and folder are left")
+        check(fakes['bare'].poll() is None and bare.exists(), 'start: a folder without runner.pid is left')
+        check(fakes['near'].poll() is None and fakes['decoy'].poll() is None, 'start: a server of a sibling folder and a process that only names the dead folder are left')
     finally:
-        for server in servers_of.values():
-            server.kill()
-            server.wait()
-        for folder in (dead, live, bare):
+        for process in fakes.values():
+            process.kill()
+            process.wait()
+        for folder in (dead, live, bare, near):
             shutil.rmtree(folder, ignore_errors=True)
 
 
-ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'inbox', 'cr', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'rehearse', 'migrate', 'cleanup')
+ORDER = ('unshared', 'setup', 'cr', 'share_join', 'child_ids', 'queues', 'inbox', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'guards', 'stopped', 'held_elsewhere', 'store', 'move', 'rehearse', 'migrate', 'cleanup', 'busy')
 SHARING = ('share_join', 'child_ids', 'queues', 'inbox', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move')
 MIGRATION = ('rehearse', 'migrate')
-PREFIX = ('unshared', 'share_join')  # a shared-board group starts on the board these leave: shared by a, joined by b
+UPGRADE = ('soak', 'guards')
+PREFIX = ('unshared', 'share_join')  # a shared-board group starts on the board these leave: shared by a, joined by b (cr, which runs between them, before the share)
 if options.watch:
     sys.stdin.read()  # end of file: the run is gone, however it ended
     cleanup()
     sys.exit(0)
 WATCHER = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--watch', '--board', BOARD], stdin=subprocess.PIPE,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**os.environ, 'SB_WATCH_ROOT': str(ROOT)}, start_new_session=True)
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**os.environ, 'SB_WATCH_ROOT': str(ROOT)},
+                           start_new_session=True)
 if options.linked:  # the parallel run that started this group is gone: end like on its SIGTERM
     threading.Thread(target=lambda: (sys.stdin.read(), os.kill(os.getpid(), signal.SIGTERM)), daemon=True).start()
 only = [name for name in options.only.split(',') if name]
 unknown = set(only) - set(ORDER)
 if unknown:
     sys.exit(f"unknown group(s): {', '.join(sorted(unknown))}")
-# soak is an upgrade check: --soak <s> or --only soak runs it.
-selected = only or [name for name in ORDER if (options.soak if name == 'soak' else options.shared if name in SHARING else options.migrate if name in MIGRATION else True)]
+selected = only or [name for name in ORDER if (options.upgrade if name in UPGRADE else options.shared if name in SHARING else options.migrate if name in MIGRATION else name != 'busy')]
 shared = any(name in SHARING for name in selected)
 clear_dead_runs()
 for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
     signal.signal(signum, on_signal)
-if options.idle:
-    print('idle', ROOT, flush=True)
-    time.sleep(600)
-    sys.exit(0)
-if not options.only and not options.serial:
-    started = time.time()
-    code = run_parallel([name for name in selected if not (shared and name == 'share_join')])  # each shared group runs PREFIX itself
-    print(f'   (parallel run {time.time() - started:.0f} s)', flush=True)
-    cleanup()
-    sys.exit(code)
+code = 0
 try:
-    setup()
-    for name in ORDER:
-        if name in selected or (shared and name in PREFIX):
-            print(f'## {name}', flush=True)
-            started = time.time()
-            globals()[f't_{name}']()
-            print(f'   ({time.time() - started:.0f} s)', flush=True)
+    if options.idle:
+        print('idle', ROOT, flush=True)
+        time.sleep(600)
+    elif (not options.only or options.parallel) and not options.serial:
+        started = time.time()
+        code = run_parallel([name for name in selected if not (shared and name == 'share_join')])  # each shared group runs PREFIX itself
+        print(f'   (parallel run {time.time() - started:.0f} s)', flush=True)
+    else:
+        try:
+            setup()
+            for name in ORDER:
+                if name in selected or (shared and name in PREFIX):
+                    print(f'## {name}', flush=True)
+                    started = time.time()
+                    globals()[f't_{name}']()
+                    print(f'   ({time.time() - started:.0f} s)', flush=True)
+        finally:
+            print(f'retries seen: {retries["sync"]} foreign key, {retries["concurrent"]} concurrent-write (1213)', flush=True)
+        print('FAILED: ' + '; '.join(failures) if failures else 'all passed', flush=True)
+        code = 1 if failures else 0
 finally:
-    print(f'foreign key retries seen: {retries["retried"]}', flush=True)
     cleanup()
-print('FAILED: ' + '; '.join(failures) if failures else 'all passed', flush=True)
-sys.exit(1 if failures else 0)
+sys.exit(code)

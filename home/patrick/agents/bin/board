@@ -26,6 +26,7 @@ import io
 import json
 import math
 import os
+import random
 import re
 import shutil
 import shlex
@@ -112,10 +113,16 @@ SYNC_ATTEMPTS = 5  # tries per window, SYNC_RETRY_SECONDS apart; then the next b
 SYNC_RETRY_SECONDS = 5
 SYNC_REPORT_AFTER = 3  # consecutive failures before every command reports them; single ones recover by themselves
 WRITE_RETRIES = 4
-# bd raises this on a write that meets a sync's merge. Retire the retry when a bd release stops raising it: rerun the soak (bin/test-shared-board.py --only soak).
+# bd raises this on a write that meets a sync's merge. Retire the retry when a bd release stops raising it: rerun the soak (bin/test-shared-board.py --upgrade).
 # On a bd upgrade recheck beads issues 4796 and 7839 and PR 7849.
 # `Merge conflict detected` is a different error, a stopped merge, and never retried.
 WRITE_RETRY_ERROR = 'foreign key conflicts'
+# bd's `create --graph` (board's one create path, create_plan) loses a race on the events journal's one counter row (bd_events_seq) to a parallel
+# writer, on any board: it fails at its single sql commit ("graph create: sql commit"), which Dolt rolls back, so nothing of the call was written
+# and it reruns safely. No other write is replayed: bd 1.3.4 `update` with several ids commits per id, and a plain `create` has steps after its
+# commit (a push), so a replay could repeat what already committed. Retire this retry when a bd release passes the soak
+# (bin/test-shared-board.py --upgrade) without it; recheck beads #8218 and #6117 on a bd upgrade.
+SERIALIZATION_ERROR = 'Error 1213 (40001)'
 STORE_WARN_BYTES = 1 << 30
 STORE_CHECK_SECONDS = 3600
 QUEUE_PREFIX = 'queue:'
@@ -293,15 +300,25 @@ def server_holding(beads: Path) -> tuple[int, str] | None:
 BD_GLOBALS: list[str] = []  # bd's global flags (-C, --actor, --db …) of the `board bd` call being run, for the reads and writes it makes
 
 
-def bd(*args: str, stdin: str | None = None, server: bool = True) -> subprocess.CompletedProcess:
+def bd(*args: str, stdin: str | None = None, server: bool = True, verb: str | None = None) -> subprocess.CompletedProcess:
+    """bd with `args`, retrying the write errors above; `verb` is bd's command when global flags precede it (the raw passthrough)."""
     if server:
         ensure_server()
+    verb = verb or (args[0] if args else '')
     for retry in range(1, WRITE_RETRIES + 2):
         result = subprocess.run(['bd', *BD_GLOBALS, *args], input=stdin, capture_output=True, text=True, env=bd_env())
-        if result.returncode == 0 or shared is None or retry > WRITE_RETRIES or WRITE_RETRY_ERROR not in result.stdout + result.stderr:
+        if result.returncode == 0 or retry > WRITE_RETRIES:
             return result
-        print(f'board: bd {args[0]} met a sync ({WRITE_RETRY_ERROR}); retry {retry} of {WRITE_RETRIES}', file=sys.stderr)
-        time.sleep(1)
+        # any board; bd's --json errors arrive on stdout, an issue's text there is no error
+        concurrent = verb == 'create' and '--graph' in args and SERIALIZATION_ERROR in bd_message(result)
+        if not (concurrent or shared is not None and WRITE_RETRY_ERROR in result.stdout + result.stderr):
+            return result
+        if concurrent:
+            print(f'board: bd {verb} met a concurrent write ({SERIALIZATION_ERROR}); retry {retry} of {WRITE_RETRIES}', file=sys.stderr)
+            time.sleep(random.uniform(0.1, 0.5) * retry)  # parallel writers must not retry in lockstep
+        else:
+            print(f'board: bd {verb} met a sync ({WRITE_RETRY_ERROR}); retry {retry} of {WRITE_RETRIES}', file=sys.stderr)
+            time.sleep(1)
     raise AssertionError('unreachable')
 
 
@@ -6482,7 +6499,7 @@ def run_bd(argv: list[str], flags: set[str], command: str, rest: list[str], read
     if sys.stdin.isatty() or flags & {'--watch', '-w'}:
         return subprocess.run(['bd', *argv], env=bd_env()).returncode
     reads_stdin = argv[:1] == ['batch'] or any(arg in ('-', '--stdin') or arg.endswith('=-') for arg in argv)
-    result = bd(*argv, stdin=sys.stdin.read() if reads_stdin else None, server=command not in BD_NO_DATABASE)
+    result = bd(*argv, stdin=sys.stdin.read() if reads_stdin else None, server=command not in BD_NO_DATABASE, verb=command)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
     if readonly and result.returncode != 0 and 'read-only' in result.stdout + result.stderr:
