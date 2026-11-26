@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Two-clone tests of shared boards through the real `board`, real bd and a local bare git remote.
+"""The board through real bd, real Dolt servers and real git: what the fake-bd checks in bin/test-agent-configs.py cannot show.
 
-    python3 -B bin/test-shared-board.py [--board <path>] [--only <name>,<name>] [--serial] [--seconds <s>] [--soak <s>]
+    python3 -B bin/test-shared-board.py [--board <path>] [--shared] [--migrate] [--only <name>,<name>] [--serial] [--seconds <s>] [--soak <s>]
 
-A full run starts every group as its own `--only` run at once (each with its own folder and servers) and prints their
-results in order; `--serial` runs them one after another in this process.
+The default run (every change request's full check, board-checks.sh) runs the groups any board needs: a board on one clone, setup,
+one change request end to end and the suite's own cleanup. Two sets run on request:
+- `--shared`, the shared-board groups (two clones syncing through a local bare git remote; SHARING): before a board is first shared,
+  after a bd upgrade, and when a change touches sharing or sync;
+- `--migrate`, board-migrate's conversion and rehearsal on a board of every earlier stored form (MIGRATION): when a change touches
+  board-migrate or the model's stored forms.
+`--only` runs the named groups, of any set.
 
-A run removes its folder and stops its servers on SIGTERM, SIGINT and SIGHUP too, and at start stops the Dolt servers of
-earlier runs whose process is gone (shared-board.* folders in /tmp, marked by their `runner.pid`).
+A run starts each group as its own `--only` run at once (each with its own folder and servers) and prints their results in order;
+`--serial` runs them one after another in this process, building the two clones once.
 
-Needs bd and Dolt, which the validator's build sandbox lacks: bin/test-agent-configs.py holds the fake-bd checks, this holds
-the ones only real clones can show. Everything lives in a temp folder, and every server it starts is stopped.
-After a bd upgrade, run the soak too (`--soak 40`, or `--only soak`): it is the check that retires the write retry
-(board WRITE_RETRY_ERROR), so ordinary runs skip it.
+Every run has a watcher process: however the run ends (a signal, a crash, SIGKILL), its Dolt servers and sync waits stop and its
+folder goes; a parallel run's groups end with it. A start also clears earlier runs whose process is gone (shared-board.* folders in
+/tmp, marked by their `runner.pid`).
+
+Needs bd and Dolt, which the validator's build sandbox lacks. After a bd upgrade, run the soak too (`--soak 40`, or
+`--only soak`): it is the check that retires the write retry (board WRITE_RETRY_ERROR), so ordinary runs skip it.
 """
 from __future__ import annotations
 
@@ -38,16 +45,21 @@ parser.add_argument('--only', default='')
 parser.add_argument('--seconds', type=float, default=6, help='the sync window and pull interval to test with')
 parser.add_argument('--soak', type=float, default=0, help='seconds of parallel writing; 0 skips the soak unless --only names it')
 parser.add_argument('--serial', action='store_true', help='run the groups one after another instead of as parallel --only runs')
+parser.add_argument('--shared', action='store_true', help='also run the shared-board groups (SHARING)')
+parser.add_argument('--migrate', action='store_true', help='also run board-migrate\'s groups (MIGRATION)')
 parser.add_argument('--idle', action='store_true', help='internal (the cleanup test): start up, then wait for a signal')
+parser.add_argument('--watch', action='store_true', help='internal: the watcher of the run whose folder SB_WATCH_ROOT names')
+parser.add_argument('--linked', action='store_true', help='internal: a parallel run\'s group; its stdin closing means the run is gone')
 options = parser.parse_args()
 if shutil.which('bd') is None:  # the gate's contract (board-checks.sh): a suite that cannot start exits 127, "cannot run", not a failed check
     print('test-shared-board: bd is not installed; the suite needs real bd, Dolt and git clones', file=sys.stderr)
     sys.exit(127)
 BOARD = str(Path(options.board).resolve())
 REGISTRY = str(Path(BOARD).parent / 'session')
-ROOT = Path(tempfile.mkdtemp(prefix='shared-board.', dir='/tmp'))
+ROOT = Path(os.environ['SB_WATCH_ROOT']) if options.watch else Path(tempfile.mkdtemp(prefix='shared-board.', dir='/tmp'))
 RUNNER_PID = 'runner.pid'  # in the run's folder: tells a later run whether this one is still alive
-(ROOT / RUNNER_PID).write_text(str(os.getpid()))
+if not options.watch:
+    (ROOT / RUNNER_PID).write_text(str(os.getpid()))
 ROLES = {'lead': 1, 'solo': 2, 'agent': 3, 'none': 4, 'autopilot': 5}  # 'none' registers no role
 
 
@@ -59,50 +71,24 @@ failures: list[str] = []
 retries = collections.Counter()
 
 
-def base_env(side: str) -> dict[str, str]:
+def base_env(side: str, window: float | None = None) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith(('CODEX_', 'CLAUDE_CODE_SESSION')) and k not in ('BEADS_ACTOR', 'BD_ACTOR')}
-    env.update(AGENT_SESSION_STATE_DIR=str(ROOT / f'state-{side}'), AGENT_BOARD_SYNC_SECONDS=str(options.seconds),
+    env.update(AGENT_SESSION_STATE_DIR=str(ROOT / f'state-{side}'), AGENT_BOARD_SYNC_SECONDS=str(options.seconds if window is None else window),
                GIT_CONFIG_GLOBAL=str(ROOT / 'gitconfig'))
     return env
 
 
-def raw(side: str, *args: str, timeout: float = 200):
+def raw(side: str, *args: str, timeout: float = 200, window: float | None = None):
     """bd without --readonly, through `board bd --raw --yes`: setup and maintenance no board verb offers (an explicit id, dolt, sync, sql, delete)."""
     result = subprocess.run([sys.executable, '-B', BOARD, 'bd', '--raw', '--yes', *args], cwd=ROOT / side, capture_output=True, text=True, timeout=timeout,
-                            env={**base_env(side), 'BD_NO_REMOTE_ADOPT': '1'}, input='')
+                            env={**base_env(side, window), 'BD_NO_REMOTE_ADOPT': '1'}, input='')
     return result.returncode, result.stdout, result.stderr, 0.0
 
 
-def board_create_args(args: tuple[str, ...], stdin: str | None) -> tuple[list[str], str | None]:
-    """A bd-create-style call as board create takes it: the description by stdin, labels as --label, ids printed without --silent."""
-    out, text, at = [], None, 0
-    while at < len(args):
-        arg = args[at]
-        if arg == '--silent':
-            at += 1
-        elif arg == '--description':
-            text, at = args[at + 1], at + 2
-        elif arg == '--stdin':
-            text, at = stdin or '', at + 1
-        elif arg in ('-l', '--labels'):
-            out += ['--label', args[at + 1]]
-            at += 2
-        else:
-            out.append(arg)
-            at += 1
-    return (out + ['--description-file', '-'], text) if text is not None else (out, stdin)
-
-
-def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = None, timeout: float = 200, filed: bool = True):
-    if args[:1] == ('create',) and '--id' in args:
-        return raw(side, *args)
-    if args[:1] == ('create',):
-        converted, stdin = board_create_args(args[1:], stdin)
-        kind = next((converted[at + 1] for at, arg in enumerate(converted) if arg in ('-t', '--type')), 'task')
-        if filed and kind == 'task' and not {'--parent', '--no-commit', '--graph'} & {arg.split('=')[0] for arg in converted}:
-            converted.append('--no-commit')  # work files in a change request or commits nothing: the tests that are not about the refusal file the second
-        args = ('create', *converted)
-    env = base_env(side)
+def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = None, timeout: float = 200, window: float | None = None):
+    """One board call with exactly these arguments, as the session of `role` (None: a person's terminal, no session);
+    `window` replaces the sync window the call (and the wait it starts) runs with."""
+    env = base_env(side, window)
     if role:
         env['CLAUDE_CODE_SESSION_ID'] = session(side, role)
     started = time.time()
@@ -113,50 +99,6 @@ def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = No
         return 124, '', 'timeout', time.time() - started
     retries['retried'] += result.stderr.count('foreign key conflicts')
     return result.returncode, result.stdout, result.stderr, time.time() - started
-
-
-def run_piped(side: str, *args: str, role: str = 'lead', timeout: float = 200) -> tuple[int, str]:
-    """A board call whose stdout and stderr share one pipe, as `2>&1 | tail` gives a session: what it reads last is what it acts on."""
-    env = base_env(side)
-    env['CLAUDE_CODE_SESSION_ID'] = session(side, role)
-    result = subprocess.run([sys.executable, '-B', BOARD, *args], cwd=ROOT / side, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
-    return result.returncode, result.stdout
-
-
-def bd(side: str, *args: str, **kwargs):
-    """A bd call as the board offers it: the writes go through their board verbs (create, close --force, block, link, update, label); setup
-    and maintenance no verb offers (dolt, sync, sql, delete, conflicts) run `board bd --raw --yes`."""
-    if args[:1] == ('create',):
-        return run(side, 'create', *args[1:], **kwargs)
-    if args[:1] == ('q',):
-        return run(side, 'bd', *args, **kwargs)  # refused by --readonly, not run raw
-    if args[:1] == ('move',):
-        return run(side, *args, **kwargs)
-    if args[:1] == ('close',):
-        reason = args[args.index('--reason') + 1]
-        return run(side, 'close', args[1], '--reason', reason, *(['--force'] if '--force' in args else []), **kwargs)
-    if args[:2] == ('dep', 'add') and '--type' not in args:
-        return run(side, 'wait', args[2], '--on', args[3], '--for', 'test setup', **kwargs)
-    if args[:2] == ('dep', 'add'):
-        return run(side, 'link', args[2], args[3], '--type', args[args.index('--type') + 1], **kwargs)
-    if any(arg.startswith(('queue:', 'for:')) for arg in args) and kwargs.get('role', 'lead') not in ('agent', 'none'):
-        return raw(side, *args)  # moves belong to send/route; the setup here changes the labels directly
-    if args[:1] == ('update',) and '--claim' in args:
-        return run(side, 'bd', *args, **kwargs)  # refused read-only
-    if args[:1] == ('update',) and '--claim' not in args and '--assignee' not in args:  # the user hold is set by hand here: no board verb does it
-        words = []
-        flags = {'--add-label': '--label', '--remove-label': '--unlabel'}
-        for arg in args:
-            words.append(flags.get(arg, arg))
-        return run(side, *words, **kwargs)
-    if args[:2] in (('label', 'add'), ('label', 'remove')):
-        return run(side, 'update', args[2], '--label' if args[1] == 'add' else '--unlabel', args[3], **kwargs)
-    if args[:1] in (('list',), ('ready',)) or args[:2] == ('dolt', 'remote') and args[2:3] == ('list',) or args[:1] == ('sql',) and args[-1].lstrip().lower().startswith('select'):
-        return run(side, 'bd', *args, **kwargs)
-    if kwargs.get('role', 'lead') is None:
-        return raw(side, *args)
-    return run(side, 'bd', '--raw', '--yes', *args, **kwargs)
 
 
 def set_field(side: str, item: str, field: str, text: str, role: str | None = 'lead'):
@@ -179,11 +121,13 @@ def git(*args: str, cwd: Path = ROOT) -> str:
 
 
 def items(side: str) -> dict[str, dict]:
-    _, out, _, _ = bd(side, 'export')
+    _, out, _, _ = run(side, 'bd', '--raw', '--yes', 'export')
     return {row['id']: row for row in map(json.loads, filter(str.strip, out.splitlines())) if row.get('_type', 'issue') == 'issue'}
 
 
-def create(side: str, title: str, *flags: str, role: str | None = 'lead', kind: str = 'change-request') -> str:
+def create(side: str, title: str, *flags: str, role: str | None = 'lead', kind: str = 'change-request', window: float | None = None) -> str:
+    """The fixture creator: a valid board create with the defaults the scenarios do not state (description 'x', a work task filed without a
+    commit unless it has a parent, a question holding nothing). A scenario about the arguments themselves calls `run(side, 'create', ...)`."""
     if kind in ('bug', 'design', 'spike', 'feature', 'cleanup'):  # a kind is a label on a task: no rule reads it
         flags, kind = (*flags, '--label', f'kind:{kind}'), 'task'
     if '--status' in flags or kind == 'epic':  # a state no verb writes (create sets no status), and the epic scope root autopilot's --root reads
@@ -192,8 +136,9 @@ def create(side: str, title: str, *flags: str, role: str | None = 'lead', kind: 
         if rc:
             raise RuntimeError(f'create {title}: {err}{out}')
         return out.strip().splitlines()[-1]
-    holds = ['--holds', 'none'] if '-t' in flags and flags[flags.index('-t') + 1] == 'decision' else []
-    rc, out, err, _ = bd(side, 'create', title, '-t', kind, '--description', 'x', '--silent', *flags, *holds, role=role)
+    holds = ['--holds', 'none'] if kind == 'decision' else []
+    filed = ['--no-commit'] if kind == 'task' and not {'--parent', '--no-commit'} & {arg.split('=')[0] for arg in flags} else []
+    rc, out, err, _ = run(side, 'create', title, '-t', kind, *flags, *holds, '--description-file', '-', *filed, stdin='x', role=role, window=window)
     if rc:
         raise RuntimeError(f'create {title}: {err}{out}')
     return out.strip().splitlines()[-1]
@@ -203,11 +148,11 @@ def settle(*sides: str) -> None:
     """Every clone holds every other's writes: manual syncs, the same a person would run. Each sync pushes what its clone
     holds by then, so one pass forward and one back over all but the last reach everyone (a, b, a)."""
     for side in (*sides, *sides[-2::-1]):
-        bd(side, 'sync')
+        run(side, 'bd', '--raw', '--yes', 'sync')
 
 
 def commits(side: str) -> int:
-    _, out, _, _ = bd(side, 'sql', '--json', 'select count(*) c from dolt_log')
+    _, out, _, _ = run(side, 'bd', 'sql', '--json', 'select count(*) c from dolt_log')
     return int(json.loads(out)[0]['c'])
 
 
@@ -254,14 +199,14 @@ def setup() -> None:
             env = {**base_env(side), 'CLAUDE_CODE_SESSION_ID': session(side, role)}
             subprocess.run(['bash', REGISTRY, 'activate', role, *(['--pulls', 'implement,review,plan'] if role == 'agent' else [])],
                            cwd=ROOT / side, env=env, capture_output=True, check=True)
-    rc, out, err, _ = bd('a', 'init', '--server', '--stealth', '--prefix', 'sb', '--skip-hooks', '--skip-agents', role=None)
+    rc, out, err, _ = raw('a', 'init', '--server', '--stealth', '--prefix', 'sb', '--skip-hooks', '--skip-agents')
     if rc:
         raise RuntimeError(f'init: {err}{out}')
     for key, value in (('status.custom', 'decided:wip,in_force:active,in_review:wip,passed:wip'), ('types.custom', 'change-request')):
-        bd('a', 'config', 'set', key, value, role=None)
+        raw('a', 'config', 'set', key, value)
     for key, value in (('custom.board.target', git('symbolic-ref', '--short', 'HEAD', cwd=ROOT / 'a').strip()), ('custom.board.setup', 'true'), ('custom.board.checks', 'true'), ('custom.board.look', 'before'), ('custom.board.view', 'code'), ('custom.board.model', '1')):
-        bd('a', 'config', 'set', key, value, role=None)
-    bd('a', 'dolt', 'commit', '-m', 'config', role=None)
+        raw('a', 'config', 'set', key, value)
+    raw('a', 'dolt', 'commit', '-m', 'config')
 
 
 def beads_files(side: str) -> list[str]:
@@ -275,7 +220,7 @@ def servers(side: str) -> list[str]:
 
 
 def remotes(side: str) -> str:
-    out = bd(side, 'dolt', 'remote', 'list', role=None)[1].strip()
+    out = run(side, 'bd', 'dolt', 'remote', 'list', role=None)[1].strip()
     return '' if out.startswith('No remotes') else out
 
 
@@ -294,29 +239,29 @@ def t_unshared() -> None:
     child = create('a', 'unshared child', '--parent', parent, kind='task')
     check('.' not in child, 'unshared board: a child has a plain id', child)
     CLOSED.append(create('a', 'closed top-level'))
-    bd('a', 'close', CLOSED[0], '--force', '--reason', 'closed before the share, which labels it too')
+    run('a', 'close', CLOSED[0], '--reason', 'closed before the share, which labels it too', '--force')
     rc, out, err, took = run('a', 'health')
     check(rc == 0 and not (ROOT / 'a/.beads/board-sync').exists(), 'unshared board: no sync state, no queue filter', err)
     check('other queues' not in out and 'set your person' not in err, 'unshared board: output as before', err)
     rc, _, err, _ = run('a', 'health', '--queue', 'ben')
     check(rc == 1 and 'not shared' in err, 'unshared board: --queue says there are no queues', err)
-    rc, _, err, _ = bd('a', 'dolt', 'remote', 'add', 'origin', f'git+file://{ROOT}/remote.git', '--allow-git-origin', role=None)
+    rc, _, err, _ = raw('a', 'dolt', 'remote', 'add', 'origin', f'git+file://{ROOT}/remote.git', '--allow-git-origin')
     check(rc == 0, 'a hand-added remote is added (board no longer comments on it)', err)
     rc, out, err, _ = run('a', 'health')
     check(rc == 0 and 'other queues' not in out and not (ROOT / 'a/.beads/board-sync').exists(), 'only board\'s mark shares: a remote alone does not', err)
-    bd('a', 'dolt', 'remote', 'remove', 'origin', role=None)
+    raw('a', 'dolt', 'remote', 'remove', 'origin')
     # Field size guard (r13-q74) through real bd: stdin is judged and still reaches bd.
     long = 'x' * 2001
-    rc, _, err, _ = bd('a', 'create', 'long', '-t', 'task', '--description', long, '--silent')
+    rc, _, err, _ = run('a', 'create', 'long', '-t', 'task', '--description-file', '-', '--no-commit', stdin=long)
     check(rc == 2 and 'description is 2001 characters' in err, 'a work item over 2000 characters is refused', err)
-    rc, out, err, _ = bd('a', 'create', 'long stdin', '-t', 'task', '--stdin', '--silent', stdin=long)
+    rc, out, err, _ = run('a', 'create', 'long stdin', '-t', 'task', '--description-file', '-', '--no-commit', stdin=long)
     check(rc == 2 and 'description is 2001 characters' in err and not out.strip(), 'the same through stdin', err)
-    rc, out, err, _ = bd('a', 'create', 'short stdin', '-t', 'task', '--stdin', '--parent', parent, '--silent', stdin='short text')
+    rc, out, err, _ = run('a', 'create', 'short stdin', '-t', 'task', '--parent', parent, '--description-file', '-', stdin='short text')
     made = out.strip().splitlines()[-1] if rc == 0 and out.strip() else ''
     check(made != '' and items('a').get(made, {}).get('description') == 'short text', 'a short description through stdin reaches bd', err or out)
-    rc, out, err, _ = bd('a', 'create', 'record', '-t', 'decision', '--description', long, '--holds', 'none', '--silent')  # a decision has no parent (nixes-7oqkc)
+    rc, out, err, _ = run('a', 'create', 'record', '-t', 'decision', '--holds', 'none', '--description-file', '-', stdin=long)  # a decision has no parent (nixes-7oqkc)
     check(rc == 0, 'a decision is not limited', err)
-    bd('a', 'dolt', 'commit', '-m', 'unshared items')
+    run('a', 'bd', '--raw', '--yes', 'dolt', 'commit', '-m', 'unshared items')
 
 
 def t_share_join() -> None:
@@ -366,19 +311,21 @@ def t_share_join() -> None:
     config = (ROOT / 'b/.beads/config.yaml').read_text()
     for needle in ('auto-commit: batch', 'auto-start: false', 'on-close: error', 'decision: Question,Decision,Rule owner', 'events-journal: true', 'require-description: true'):
         check(needle in config, f'join: config.yaml has {needle}')
-    _, out, _, _ = bd('b', 'config', 'get', 'status.custom')
+    _, out, _, _ = run('b', 'bd', '--raw', '--yes', 'config', 'get', 'status.custom')
     check('in_review' in out, 'join: the custom statuses travel', out)
-    _, out, _, _ = bd('b', 'config', 'get', 'min_hash_length')
+    _, out, _, _ = run('b', 'bd', '--raw', '--yes', 'config', 'get', 'min_hash_length')
     check('5' in out, 'join: min_hash_length travels', out)
     rc, out, err, _ = run('b', 'share', role=None)
     check(rc == 0 and '0 top-level' in out, "a second person's share takes nothing", err + out)
     git('clone', '-q', 'remote.git', 'unset')
     rc, out, err, _ = run('unset', 'join', role=None)
     check(rc == 1 and 'agents.person' in err and not (ROOT / 'unset/.beads').exists(), 'join with no person at no terminal: says how to set it, changes nothing', err)
+    rc, out, err, _ = run('a', 'setup', role=None)
+    check(rc == 0 and 'up to date' in out and ' -> ' not in out, 'setup on a shared board: share applied the same lists, the shared ones included', err + out)
 
 
 def t_child_ids() -> None:
-    epic = create('a', 'ids epic', '-l', 'topic:x')
+    epic = create('a', 'ids epic', '--label', 'topic:x')
     settle('a', 'b')
     rc, out, err, _ = raw('a', 'create', 'atomic status child', '--type', 'task', '--status', 'passed',
                           '--description', 'x', '--metadata', '{"hold":"plan"}', '--deps', f'parent-child:{epic}',
@@ -409,15 +356,15 @@ def t_child_ids() -> None:
     check('topic:x' in child.get('labels', []) and not any(label.startswith('queue:') for label in child.get('labels', [])),
           'child ids: other labels copied, the queue label not', child.get('labels'))
     check(any(dep['type'] == 'parent-child' and dep['depends_on_id'] == epic for dep in child.get('dependencies', [])), 'child ids: linked to the parent')
-    _, out2, _, _ = bd('a', 'sql', '--json', f'select count(*) c from child_counters where parent_id = "{epic}"')
+    _, out2, _, _ = run('a', 'bd', 'sql', '--json', f'select count(*) c from child_counters where parent_id = "{epic}"')
     check(json.loads(out2)[0]['c'] == 0, 'child ids: child_counters untouched', out2)
-    rc, out, err, _ = bd('a', 'q', 'quick child', '--parent', epic)
+    rc, out, err, _ = run('a', 'bd', 'q', 'quick child', '--parent', epic)
     check(rc != 0 and 'board create' in err and not out.strip(), 'q is refused read-only, naming board create', out + err)
     tracked = create('a', 'tracked')
     both = create('a', 'two link kinds', '--deps', f'relates-to:{tracked}', '--parent', epic, kind='task')
     kinds = {(dep['type'], dep['depends_on_id']) for dep in items('a')[both].get('dependencies', [])}
     check(kinds == {('relates-to', tracked), ('parent-child', epic)}, "child ids: a node's dep and its parent link both land (real bd; a revision's tracks link and its parent do alike)", kinds)
-    rc, out, err, _ = bd('a', 'create', 'no such parent', '-t', 'task', '--description', 'x', '--parent', 'sb-nope')
+    rc, out, err, _ = run('a', 'create', 'no such parent', '-t', 'task', '--parent', 'sb-nope', '--description-file', '-', stdin='x')
     check(rc != 0, 'child ids: an unknown parent fails', out)
     # Links (real bd): a blocking edge between two new work items is bd's own write; a pair with another link kind refuses before record writes.
     plan = ROOT / 'links-plan.json'
@@ -432,7 +379,7 @@ def t_child_ids() -> None:
     draft.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
 
     def decision(title: str) -> str:
-        item = create('a', title, '-t', 'decision', kind='decision')
+        item = create('a', title, kind='decision')
         run('a', 'claim', item)
         return item
 
@@ -503,7 +450,7 @@ def t_child_ids() -> None:
     check(rc != 0 and solo in err and status_of(newest) == 'decided' and status_of(held) == 'decided'
           and items('a')[held].get('assignee') == solo and linked(newest, held, 'tracks'),
           'record --replaces: release refuses before writing while another session holds the old ruling', (rc, err, out))
-    bd('a', 'sync')
+    run('a', 'bd', '--raw', '--yes', 'sync')
 
 
 def t_queues() -> None:
@@ -532,20 +479,14 @@ def t_queues() -> None:
     check(rc == 0 and 'queue ben' in out, 'show: any item, with its queue', out)
     rc, _, err, _ = run('a', 'claim', ben, role='agent')
     check(rc == 1 and "ben's queue" in err and f'board route anna {ben}' in err, 'claim by id on another queue: refused, says how to move', err)
-    rc, _, err, _ = run('a', 'take', ben)
-    check(rc == 1 and "ben's queue" in err, 'take on another queue: refused', err)
-    question = create('b', 'ben question', '-t', 'decision')
-    settle('a', 'b')
-    rc, _, err, _ = run('a', 'claim', question)
-    check(rc == 1 and "ben's queue" in err, 'claim by id: questions refused alike', err)
-    rc, _, err, _ = bd('a', 'update', ben, '--claim', role='agent')
+    rc, _, err, _ = run('a', 'bd', 'update', ben, '--claim', role='agent')
     check(rc != 0 and 'board claim' in err, 'bd update --claim is refused read-only, naming board claim', err)
     rc, out, _, _ = run('a', 'claim', role='agent')
     check(rc == 0 and ben not in out and 'claimed' in out, 'bare claim: mine only', out)
     run('a', 'unclaim', re.search(r'claimed (\S+)', out)[1], '--resume', 'claim it again', role='agent') if rc == 0 else None  # a CR claim prints its worktree first
     # A blocker in another queue, always listed.
     blocked = create('a', 'anna waits')
-    bd('a', 'dep', 'add', blocked, ben)
+    run('a', 'wait', blocked, '--on', ben, '--for', 'test setup')
     settle('a', 'b')
     _, out, _, _ = run('a', 'health')
     check('blocking yours' in out and ben in out, "other people's items blocking mine are listed", out)
@@ -557,14 +498,6 @@ def t_queues() -> None:
     check('unrouted' in out and mixed in out and 'queues anna,ben' in out, 'parents in different queues: unrouted and listed', out)
     _, out, _, _ = run('a', 'queue')
     check(mixed not in out.split('unrouted')[0], 'parents in different queues: nobody claims it by default', out)
-    rc, _, err, _ = run('a', 'claim', mixed, role='agent')
-    check(rc == 1 and 'unrouted' in err and f'board route <person> {mixed}' in err, 'claim by id on an unrouted item: refused until routed', err)
-    rc, _, err, _ = run('a', 'take', mixed)
-    check(rc == 1 and 'unrouted' in err, 'take on an unrouted item: refused', err)
-    rc, _, err, _ = run('a', 'route', 'anna', mixed, role='agent')
-    check(rc == 1 and 'only lead' in err, 'route: an agent is refused', err)
-    rc, _, err, _ = run('a', 'route', 'anna', mixed, role='autopilot')
-    check(rc == 1 and 'only lead' in err, 'route: autopilot is refused', err)
     rc, out, err, _ = run('a', 'route', 'anna', mixed, ben)
     rows = items('a')
     check(rc == 0 and 'queue:anna' in rows[mixed]['labels'] and 'queue:anna' in rows[ben]['labels'] and 'queue:ben' not in rows[ben]['labels'],
@@ -575,23 +508,38 @@ def t_queues() -> None:
     rc, _, err, _ = run('a', 'route', 'ben', ben, role='solo')
     check(rc == 0 and 'queue:ben' in items('a')[ben]['labels'], 'route: solo moves', err)
     # Moving an epic moves its children.
-    rc, _, err, _ = bd('a', 'update', epic, '--remove-label', 'queue:anna', '--add-label', 'queue:ben')
+    rc, _, err, _ = raw('a', 'update', epic, '--remove-label', 'queue:anna', '--add-label', 'queue:ben')
     check(rc == 0, 'lead moves an epic', err)
     settle('a', 'b')
     _, out, _, _ = run('b', 'queue')
     check(child in out, 'a moved epic takes its children along', out)
     _, out, _, _ = run('a', 'queue')
     check(child not in out, 'a moved child leaves the old queue', out)
-    bd('a', 'update', epic, '--remove-label', 'queue:ben', '--add-label', 'queue:anna')
+    raw('a', 'update', epic, '--remove-label', 'queue:ben', '--add-label', 'queue:anna')
     settle('a', 'b')
     # A closed parent's label still routes.
     closing = create('a', 'closed parent', kind='milestone')
     kid = create('a', 'kid of closed', '--parent', closing)
     settle('a', 'b')
-    bd('a', 'close', closing, '--force', '--reason', 'closed to test a closed parent still routes its child')
+    run('a', 'close', closing, '--reason', 'closed to test a closed parent still routes its child', '--force')
     settle('a', 'b')
     _, out, _, _ = run('a', 'queue')
     check(kid in out, "a closed parent's queue still routes its child", out)
+    # Moves (parents and queues): a lead reparents, a person's terminal moves queue labels, a lead's worker is refused.
+    item = create('a', 'to move')  # an item moves between change requests: the queue rule is about the parent it takes
+    parent_b = create('b', 'ben parent')
+    settle('a', 'b')
+    moved = create('a', 'to reparent', '--parent', item, kind='task')
+    worker = subprocess.run([sys.executable, '-B', BOARD, 'move', moved, '--to', parent_b], cwd=ROOT / 'a', capture_output=True, text=True,
+                            env={**base_env('a'), 'BEADS_ACTOR': f"{session('a', 'lead')[-8:]}/worker01", 'CLAUDE_CODE_SESSION_ID': session('a', 'lead')})
+    check(worker.returncode == 2 and 'only lead and solo' in worker.stderr, "a lead's worker is refused", worker.stderr)
+    rc, _, err, _ = run('a', 'move', moved, '--to', parent_b)
+    check(rc == 0, 'lead: reparent passes', err)
+    added, removed = raw('a', 'label', 'add', item, 'queue:ben'), raw('a', 'label', 'remove', item, 'queue:anna')
+    check(added[0] == 0 and removed[0] == 0, "a person's terminal moves queue labels", added[2] + removed[2])
+    rows = items('a')
+    check('queue:ben' in rows[item].get('labels', []) and 'queue:anna' not in rows[item].get('labels', []), 'moves took effect')
+    settle('a', 'b')
     # Unset person.
     git('config', '--unset', 'agents.person', cwd=ROOT / 'a')
     rc, _, err, _ = run('a', 'health')
@@ -601,70 +549,49 @@ def t_queues() -> None:
     git('config', 'agents.person', 'anna', cwd=ROOT / 'a')
 
 
-def t_moves() -> None:
-    item = create('a', 'to move')  # an item moves between change requests: the queue rule is about the parent it takes
-    parent_b = create('b', 'ben parent')
-    settle('a', 'b')
-    child = create('a', 'to reparent', '--parent', item, kind='task')
-    for role in ('agent', 'none'):
-        for args in (('update', item, '--label', 'queue:ben'), ('update', item, '--unlabel', 'queue:anna'), ('move', child, '--to', parent_b),
-                     ('create', 'for ben', '-t', 'task', '--description', 'x', '-l', 'queue:ben')):
-            rc, _, err, _ = bd('a', *args, role=role)
-            check(rc in (1, 2) and ('only lead and solo' in err or 'board send' in err or 'board route' in err), f'{role} session refused: {" ".join(args[:2])}', err)
-    for args in (('label', 'add', item, 'queue:ben'), ('sql', f"delete from labels where issue_id='{item}'")):
-        rc, _, err, _ = run('a', 'bd', *args, role='agent')
-        check(rc != 0 and 'read-only' in err, f'board bd refuses a write read-only: {" ".join(args[:2])}', err)
-    env_rc = subprocess.run([sys.executable, '-B', BOARD, 'move', child, '--to', parent_b], cwd=ROOT / 'a', capture_output=True, text=True,
-                            env={**base_env('a'), 'BEADS_ACTOR': f"{session('a', 'lead')[-8:]}/worker01", 'CLAUDE_CODE_SESSION_ID': session('a', 'lead')})
-    check(env_rc.returncode == 2 and 'only lead and solo' in env_rc.stderr, "a lead's worker is refused", env_rc.stderr)
-    rc, _, err, _ = bd('a', 'update', item, '--add-label', 'topic:free', role='agent')
-    check(rc == 0, 'agent: other label changes pass', err)
-    plan = ROOT / 'label-plan.json'
-    plan.write_text(json.dumps({'nodes': [{'key': 'n', 'title': 'loose label', 'description': 'x', 'type': 'task', 'labels': ['loose']}]}))
-    for what, args in (('create --label', ('create', 'loose label', '-t', 'task', '--description', 'x', '--label', 'loose')),
-                       ('create --graph', ('create', '--graph', str(plan))), ('update --label', ('update', item, '--label', 'human')),
-                       ('update --label', ('update', item, '--label', 'loose'))):
-        rc, _, err, _ = run('a', *args, role='agent')
-        check(rc != 0 and 'a label starts with' in err, f'a label outside the shapes check reports is refused: {what}', err)
-    rc, _, err, _ = run('a', 'update', item, '--unlabel', 'loose', role='agent')
-    check(rc == 0, 'a label of any shape can still be removed', err)
-    rc, _, err, _ = bd('a', 'move', child, '--to', parent_b, role='lead')
-    check(rc == 0, 'lead: reparent passes', err)
-    rc, _, err, _ = bd('a', 'label', 'add', item, 'queue:ben', role='solo')
-    check(rc == 0, 'solo: moves pass', err)
-    rc, _, err, _ = bd('a', 'label', 'remove', item, 'queue:anna', role=None)
-    check(rc == 0, "a person's terminal is not limited", err)
-    rows = items('a')
-    check('queue:ben' in rows[item].get('labels', []) and 'queue:anna' not in rows[item].get('labels', []), 'moves took effect')
-    settle('a', 'b')
+def close_window(side: str = 'a') -> float:
+    """Ends an open send window now: stops its wait and starts the window again from this moment, with the length under test. Returns when it started."""
+    unsent = ROOT / side / '.beads' / 'board-sync' / 'unsent'  # the wait marks the first unsent write: it opens the window
+    wait_until(unsent.exists, 30)
+    for pid in waits():
+        os.kill(pid, signal.SIGKILL)
+    wait_until(lambda: not waits(), 10)
+    started = time.time()
+    os.utime(unsent)
+    run(side, 'health')  # a command restarts a dead wait
+    return started
 
 
 def t_window() -> None:
     settle('a', 'b')
     check(wait_until(lambda: not waits(), options.seconds * 3), 'no wait left running before the burst', waits())
     before = commits('a')
-    started = time.time()
-    rc, _, err, took = raw('a', 'create', 'burst first', '-t', 'task', '--description', 'x', '--silent')
-    check(took < 4, f'a write returns at once with the wait detached ({took:.1f} s)', took)
-    made = [raw('a', 'create', f'burst {n}', '-t', 'task', '--description', 'x', '--silent')[1].strip() for n in range(5)]  # board create commits per call; the window is about bd's own writes
+    # A burst is judged against an open window, so it runs under one no machine load can outlast (a window of options.seconds closes before six
+    # bd calls return on a loaded machine); close_window then starts the window under test.
+    open_window = 600
+    rc, _, err, took = raw('a', 'create', 'burst first', '-t', 'task', '--description', 'x', '--silent', window=open_window)
+    check(took < open_window / 2, f'a write returns at once with the wait detached ({took:.1f} s)', took)  # an attached wait would hold the call for the whole window
+    made = [raw('a', 'create', f'burst {n}', '-t', 'task', '--description', 'x', '--silent', window=open_window)[1].strip() for n in range(5)]  # board create commits per call; the window is about bd's own writes
     check(len(waits()) == 1, 'one wait for the board', waits())
     check(commits('a') == before, 'writes stay uncommitted during the window')
+    started = close_window()
     if not wait_until(lambda: commits('a') > before and not waits(), options.seconds * 4):
         check(False, 'the wait synced and ended', commits('a'))
     elapsed = time.time() - started
     check(elapsed >= options.seconds - 1, f'sync waited for the window ({elapsed:.1f} s of {options.seconds} s)')
     check(commits('a') - before <= 2 and commits('a') - before >= 1, 'a burst goes out as one commit (a merge may add one)', commits('a') - before)
-    bd('b', 'dolt', 'pull')
+    run('b', 'bd', '--raw', '--yes', 'dolt', 'pull')
     check(all(item in items('b') for item in made), 'the burst reached the other clone')
     # The product path: board create commits once per call (bd's create --graph ignores dolt.auto-commit=batch, accepted), so the count is not
     # pinned. What must hold: one wait for the burst, every item reaches the other clone, nothing is left unsent.
     settle('a', 'b')
     check(wait_until(lambda: not waits(), options.seconds * 3), 'no wait left running before the board create burst', waits())
-    made = [create('a', f'board burst {n}', kind='task') for n in range(5)]
+    made = [create('a', f'board burst {n}', kind='task', window=open_window) for n in range(5)]
     check(len(waits()) == 1, 'one wait for a burst of board create calls', waits())
+    close_window()
     check(wait_until(lambda: not waits(), options.seconds * 4), 'the wait ended after the board create burst')
     check(not (ROOT / 'a' / '.beads' / 'board-sync' / 'unsent').exists(), 'nothing left unsent after the board create burst')
-    bd('b', 'dolt', 'pull')
+    run('b', 'bd', '--raw', '--yes', 'dolt', 'pull')
     check(all(item in items('b') for item in made), 'a board create burst reached the other clone')
 
 
@@ -705,217 +632,16 @@ def t_pull() -> None:
     rc, _, err, took = run('b', 'health')
     check(rc == 0 and took < 9, f'a failed pull does not stop the command ({took:.1f} s)', err)
     hidden.rename(ROOT / 'remote.git')
-    bd('b', 'sync')
-
-
-def t_writers() -> None:
-    """One owner per write kind (nixes-sjkpn): each review finding of r7p7f (F1-F5) through the public verbs, on clone a."""
-    def probe(title: str) -> str:
-        return create('a', title, '--no-commit', kind='task')
-
-    def status(item: str) -> str:
-        return items('a')[item]['status']
-
-    held = create('a', 'held by solo for the writer tests')
-    rc, _, err, _ = run('a', 'claim', held, role='solo')
-    check(rc == 0, 'writers: solo holds a change request', err)
-    item, other_item = create('a', 'an item of the held request', '--parent', held, kind='task'), create('a', 'a second item', '--parent', held, kind='task')
-
-    # F1 (nixes-i4pl3 all or none): a multi-id drop checks every id's whole close before writing any.
-    target, waiter = probe('F1 target'), probe('F1 deferred waiter')
-    check(run('a', 'wait', waiter, '--on', target, '--for', 'its output')[0] == 0 and run('a', 'defer', waiter, '--reason', 'parked while it waits')[0] == 0,
-          'F1: a deferred task waits on a task')
-    rc, _, err, _ = run('a', 'close', target, waiter, '--reason', 'dropped together with its waiter', '--outcome', 'dropped')
-    check(rc != 0 and status(target) == 'open' and status(waiter) == 'deferred', 'F1: a drop with a deferred waiter in the same call writes nothing', err)
-    item_target = probe('F1 target of a held item')
-    check(run('a', 'wait', item, '--on', item_target, '--for', 'its output', role='solo')[0] == 0, 'F1: an item of the held request waits on a task')
-    rc, _, err, _ = run('a', 'close', item_target, item, '--reason', 'dropped together with the held item', '--outcome', 'dropped')
-    check(rc != 0 and status(item_target) == 'open' and status(item) == 'open', "F1: a drop with an item the caller may not close writes nothing", err)
-    run('a', 'unlink', item, item_target, role='solo')
-    target, waiter, other = probe('F1 target of a blocked waiter'), probe('F1 waiter with another blocker'), probe('F1 the other blocker')
-    check(run('a', 'wait', waiter, '--on', target, '--for', 'its output')[0] == 0 and run('a', 'wait', waiter, '--on', other, '--for', 'its output')[0] == 0,
-          'F1: a task waits on two tasks')
-    rc, _, err, _ = run('a', 'close', target, waiter, '--reason', 'dropped together with a waiter bd would refuse', '--outcome', 'dropped')
-    check(rc != 0 and other in err and status(target) == 'open' and status(waiter) == 'open', "F1: a drop with a waiter whose other blocker is open writes nothing", err)
-    rc, _, err, _ = run('a', 'close', waiter, target, other, '--reason', 'dropped together, waiter named first', '--outcome', 'dropped')
-    check(rc == 0 and status(target) == status(waiter) == status(other) == 'closed', 'F1: a waiter named before its targets closes with them', err)
-
-    # F3 (nixes-i4pl3): reopen refuses a record that would wait on a record closed dropped.
-    target, waiter = probe('F3 target'), probe('F3 waiter')
-    run('a', 'wait', waiter, '--on', target, '--for', 'its output')
-    check(run('a', 'close', target, waiter, '--reason', 'dropped together in one call', '--outcome', 'dropped')[0] == 0, 'F3: target and waiter closed dropped in one call')
-    rc, _, err, _ = run('a', 'reopen', waiter)
-    check(rc != 0 and target in err and 'unlink' in err and status(waiter) == 'closed', 'F3: reopen refuses a waiter of a record closed dropped, naming unlink', err)
-    question, task_target = create('a', 'F3 question that waits', '-t', 'decision'), probe('F3 target of a question')
-    run('a', 'wait', question, '--on', task_target, '--for', 'its result')
-    check(run('a', 'close', task_target, question, '--reason', 'dropped together in one call', '--outcome', 'dropped')[0] == 0, 'F3: a question and its target closed dropped together')
-    rc, _, err, _ = run('a', 'reopen', question)
-    check(rc != 0 and task_target in err and status(question) == 'closed', 'F3: reopen refuses a question that would wait on a record closed dropped', err)
-
-    # F2 (nixes-j65oa): only move writes a parent; every wait meets the hold rule, a gate's included.
-    loose = probe('F2 no-commit task')
-    rc, _, err, _ = run('a', 'link', loose, held, '--type', 'parent-child')
-    check(rc != 0 and 'agents board move' in err and not any(d.get('type') == 'parent-child' for d in items('a')[loose].get('dependencies') or []),
-          'F2: link refuses a parent, naming move', err)
-    rc, _, err, _ = run('a', 'unlink', other_item, held, role='solo')
-    check(rc != 0 and 'agents board move' in err and any(d.get('depends_on_id') == held for d in items('a')[other_item].get('dependencies') or []),
-          'F2: unlink refuses a parent edge, naming move', err)
-    rc, _, err, _ = run('a', 'gate', 'create', '--blocks', other_item, '--reason', 'a person signs it off', role='agent')
-    check(rc != 0 and held in err and not any(i.get('issue_type') == 'gate' and i['status'] == 'open' for i in items('a').values()),
-          "F2: a gate on an item of a request another session holds is refused like its wait", err)
-
-    # F4 (nixes-cs2mp): field apply on an item of a held request follows update's write rule.
-    for role in ('agent', 'lead'):
-        rc, _, err, _ = set_field('a', other_item, 'notes', f'notes by {role}', role=role)
-        check(rc != 0 and held in err and items('a')[other_item].get('notes', '') != f'notes by {role}', f'F4: field apply by a non-holder {role} is refused', err)
-        run('a', 'field', 'discard', other_item, role=role)
-    rc, _, err, _ = set_field('a', other_item, 'notes', 'notes by the holder', role='solo')
-    check(rc == 0 and items('a')[other_item].get('notes') == 'notes by the holder', 'F4: the holder applies a field', err)
-
-    # F5 (nixes-i4pl3, nixes-308o2): create files into an open change request; a planner or deciding session may file into a held one.
-    rejected = create('a', 'F5 request rejected')
-    check(run('a', 'cr', 'reject', rejected, 'the work is moot')[0] == 0, 'F5: a request is rejected')
-    rc, _, err, _ = run('a', 'create', 'filed under a rejected request', '-t', 'task', '--description', 'x', '--parent', rejected)
-    check(rc != 0 and rejected in err and not any(i.get('title') == 'filed under a rejected request' for i in items('a').values()), 'F5: create refuses a closed change request as parent', err)
-    for role in ('agent', 'lead'):
-        rc, _, err, _ = run('a', 'create', f'filed by {role} into a held request', '-t', 'task', '--description', 'x', '--parent', held, role=role)
-        check(rc == 0, f'F5: a {role} files an item into a request solo holds', err)
-    # The rule x write-path matrix (nixes-z94o1): each rule through every verb that writes its kind, for an existing and a new end. A refusal leaves
-    # nothing written; a positive cell shows the path writes at all. The writers by kind: model.md Authority; the allowlist in test-agent-configs pins them.
-    def titled(title: str) -> list[str]:
-        return [i for i, row in items('a').items() if row.get('title') == title]
-
-    def deps_of(record: str) -> list[tuple[str, str]]:
-        return [(d.get('depends_on_id'), d.get('type')) for d in items('a')[record].get('dependencies') or []]
-
-    def refused(cell: str, result, needle: str | None, unchanged) -> None:
-        rc, out, err, _ = result
-        check(rc != 0 and (needle is None or needle in err) and unchanged(), cell, (rc, err.strip()[-300:], out.strip()[-200:]))
-
-    def created(cell: str, args: tuple, title: str, role: str | None = 'lead', needle: str | None = None):
-        refused(cell, run('a', 'create', title, *args, role=role), needle, lambda: not titled(title))
-
-    def new_waiter(cell: str, kind: str, target: str, title: str) -> None:
-        """A plan's new node that waits on an existing record (waits_on): the graph path of a new waiter."""
-        plan = ROOT / f'matrix-{len(titled_plans)}.json'
-        titled_plans.append(plan)
-        node = {'key': 'n', 'title': title, 'type': kind, 'description': 'x', 'waits_on': [{'on': target, 'for': 'its output'}],
-                **({'no_commit': True} if kind == 'task' else {})}
-        plan.write_text(json.dumps({'nodes': [node]}))
-        refused(cell, run('a', 'create', '--graph', str(plan)), target if kind != 'milestone' else 'milestone', lambda: not titled(title))
-    titled_plans: list = []
-
-    milestone = create('a', 'matrix milestone', kind='milestone')
-    ruling = create('a', 'matrix in-force ruling', '-t', 'decision', '--status', 'in_force', kind='decision')
-    task, deferred, dropped = probe('matrix task'), probe('matrix deferred target'), probe('matrix dropped target')
-    check(run('a', 'defer', deferred, '--reason', 'set aside for the matrix')[0] == 0
-          and run('a', 'close', dropped, '--reason', 'dropped for the matrix tests', '--outcome', 'dropped')[0] == 0
-          and status(ruling) == 'in_force', 'matrix: a deferred and a dropped target, an in-force ruling')
-    dropped_cr = create('a', 'matrix dropped request')
-    dropped_item = create('a', 'matrix item of the dropped request', '--parent', dropped_cr, kind='task')
-    check(run('a', 'close', dropped_item, '--reason', 'done before its request was dropped')[0] == 0
-          and run('a', 'cr', 'reject', dropped_cr, 'the request is dropped for the matrix')[0] == 0, 'matrix: an item done in a dropped request')
-
-    # A milestone waits on nothing: wait (existing target), gate create and create --holds (a new target), a new milestone's deps (a new waiter).
-    refused('matrix milestone x wait: refused', run('a', 'wait', milestone, '--on', task, '--for', 'its output'), 'milestone', lambda: not deps_of(milestone))
-    refused('matrix milestone x gate create (new target): refused, no gate', run('a', 'gate', 'create', '--blocks', milestone, '--reason', 'a person signs it off', '--title', 'matrix gate on the milestone'),
-            'milestone', lambda: not deps_of(milestone) and not titled('matrix gate on the milestone'))
-    created('matrix milestone x create --holds (new target): refused before the create', ('-t', 'decision', '--description', 'x', '--holds', milestone),
-            'matrix question the milestone would wait on', needle='milestone')
-    new_waiter('matrix milestone x graph waits_on (new waiter): refused', 'milestone', task, 'matrix new milestone that waits')
-    # An in-force ruling waits only for its planning: wait on work refused; a new human gate or a new question it may wait on.
-    refused('matrix in-force ruling x wait on work: refused', run('a', 'wait', ruling, '--on', task, '--for', 'its output'), 'planning', lambda: not deps_of(ruling))
-    rc, out, err, _ = run('a', 'gate', 'create', '--blocks', ruling, '--reason', 'the user gives the go', '--title', 'matrix gate on the ruling')
-    check(rc == 0 and any(d[1] == 'blocks' for d in deps_of(ruling)), 'matrix in-force ruling x gate create (new human gate): written', err)
-    # Nothing waits on a deferred or dropped record (an item of a dropped request included): wait, and a new waiter's create --deps.
-    for name, target in (('deferred', deferred), ('dropped', dropped), ('item of a dropped request', dropped_item)):
-        waiter = probe(f'matrix waiter on the {name} target')
-        refused(f'matrix {name} target x wait: refused', run('a', 'wait', waiter, '--on', target, '--for', 'its output'), target, lambda: not deps_of(waiter))
-        new_waiter(f'matrix {name} target x graph waits_on (new waiter): refused', 'task', target, f'matrix new waiter on the {name} target')
-    # The cycle rule: wait, and a new item that would close a cycle through existing waits.
-    first, second = probe('matrix cycle first'), probe('matrix cycle second')
-    check(run('a', 'wait', second, '--on', first, '--for', 'its output')[0] == 0, 'matrix: one wait of a would-be cycle')
-    refused('matrix cycle x wait: refused', run('a', 'wait', first, '--on', second, '--for', 'its output'), 'cycle', lambda: not deps_of(first))
-    # The hold rule on a wait: an agent that does not hold the request writes no wait on its item (wait, unlink, create --holds; gate create: F2 above).
-    agent_target = probe('matrix target of the held item')
-    check(run('a', 'wait', item, '--on', agent_target, '--for', 'its output', role='solo')[0] == 0, 'matrix: the holder makes its item wait')
-    refused('matrix hold x wait by a non-holder agent: refused', run('a', 'wait', other_item, '--on', agent_target, '--for', 'its output', role='agent'),
-            held, lambda: not deps_of(other_item) or all(d[1] == 'parent-child' for d in deps_of(other_item)))
-    refused('matrix hold x unlink by a non-holder agent: refused', run('a', 'unlink', item, agent_target, role='agent'), held,
-            lambda: (agent_target, 'blocks') in deps_of(item))
-    created('matrix hold x create --holds by a non-holder agent: refused before the create', ('-t', 'decision', '--description', 'x', '--holds', item),
-            'matrix question the held item would wait on', role='agent', needle=held)
-    run('a', 'unlink', item, agent_target, role='solo')
-    # A parent changes through move only: a plan edge giving an existing record a parent (link and unlink: F2 above); move by a non-holder.
-    graph = ROOT / 'matrix-parent-graph.json'
-    graph.write_text(json.dumps({'nodes': [{'key': 'cr', 'title': 'matrix new request', 'type': 'change-request', 'description': 'x'}],
-                                 'edges': [{'from_id': task, 'to_key': 'cr', 'type': 'parent-child'}]}))
-    refused('matrix parent x create --graph edge to an existing record: refused', run('a', 'create', '--graph', str(graph)), 'move',
-            lambda: not titled('matrix new request') and not deps_of(task))
-    loose, open_cr = probe('matrix task moved into a closed request'), create('a', 'matrix open request')
-    refused('matrix parent x move of an item by a non-holder agent: refused', run('a', 'move', other_item, '--to', open_cr, role='agent'), held,
-            lambda: (held, 'parent-child') in deps_of(other_item))
-    refused('matrix parent x move into a closed request: refused', run('a', 'move', loose, '--to', dropped_cr), dropped_cr, lambda: not deps_of(loose))
-    # The hold rule on item fields: title, priority, label, close, route, send by a non-holder (field apply: F4 above); the holder writes and routes.
-    person = git('config', 'agents.person', cwd=ROOT / 'a').strip()
-    before = items('a')[other_item]
-    for role in ('agent', 'lead'):
-        for cell, args in (('update --title', ('update', other_item, '--title', f'retitled by {role}')), ('update --priority', ('update', other_item, '--priority', '0')),
-                           ('update --label', ('update', other_item, '--label', 'topic:matrix')),
-                           ('close', ('close', other_item, '--reason', f'closed by a non-holder {role} session')),
-                           ('route', ('route', person, other_item)), ('send', ('send', person, other_item))):
-            if role == 'agent' and cell in ('route', 'send'):
-                continue  # route and send are a deciding session's (attended): an agent is refused before the hold rule
-            refused(f'matrix hold x {cell} by a non-holder {role}: refused', run('a', *args, role=role), held if cell != 'send' else None,
-                    lambda: all(items('a')[other_item].get(key) == before.get(key) for key in ('title', 'priority', 'labels', 'status')))
-    rc, _, err, _ = run('a', 'route', person, other_item, role='solo')
-    check(rc == 0, "matrix hold x route by the holder: written", err)
-    # The dropped-wait rules: a drop under a live waiter (close, cr reject of a request whose item is waited on), a deferral under one, and a reopen
-    # whose wait would name a dropped record: a task, and an item done in a request that was dropped (S1: the refusal names the request).
-    waited, waiter = probe('matrix waited task'), probe('matrix its waiter')
-    run('a', 'wait', waiter, '--on', waited, '--for', 'its output')
-    refused('matrix dropped wait x close --outcome dropped under a waiter: refused', run('a', 'close', waited, '--reason', 'dropped while it is waited on',
-                                                                                       '--outcome', 'dropped'), waiter, lambda: status(waited) == 'open')
-    refused('matrix deferred wait x defer under a waiter: refused', run('a', 'defer', waited, '--reason', 'set aside while it is waited on'), waiter,
-            lambda: status(waited) == 'open')
-    rejected_cr = create('a', 'matrix request whose item is waited on')
-    waited_item = create('a', 'matrix waited item', '--parent', rejected_cr, kind='task')
-    outside, later = probe('matrix outside waiter of the item'), probe('matrix waiter of the item, done first')
-    check(all(run('a', 'wait', w, '--on', waited_item, '--for', 'its output')[0] == 0 for w in (outside, later))
-          and run('a', 'close', later, waited_item, '--reason', 'both done before the request is dropped')[0] == 0, 'matrix: two waiters of an item, one done with it')
-    refused('matrix dropped wait x cr reject under a waiter of its item: refused', run('a', 'cr', 'reject', rejected_cr, 'dropped while its item is waited on'),
-            outside, lambda: status(rejected_cr) != 'closed')
-    check(run('a', 'unlink', outside, waited_item)[0] == 0 and run('a', 'cr', 'reject', rejected_cr, 'the request is dropped after its item was done')[0] == 0,
-          'matrix: the request is dropped once the live wait is gone')
-    rc, _, err, _ = run('a', 'reopen', later)
-    check(rc != 0 and rejected_cr in err and 'unlink' in err and status(later) == 'closed',
-          'S2: reopen refuses a waiter whose target is an item of a dropped request, naming the request', err)
-    # Create authority (nixes-0an9j): filing into a CR is for its holder, the user, a planner or a deciding session; any other session is refused
-    # through every creation path (create, graph nodes); a CR the same plan creates is its creator's to fill.
-    rc, _, err, _ = run('a', 'create', 'filed by a roleless session', '-t', 'task', '--description', 'x', '--parent', held, role='none')
-    check(rc != 0 and held in err and '--no-commit' in err and 'create --graph' in err and not titled('filed by a roleless session'), '0an9j: create --parent by a session that may not file is refused', err)
-    graph = ROOT / 'authority-graph.json'
-    graph.write_text(json.dumps({'nodes': [{'key': 'item', 'title': 'graph node filed by a roleless session', 'type': 'task', 'description': 'x', 'parent_id': held}]}))
-    rc, _, err, _ = run('a', 'create', '--graph', str(graph), role='none')
-    check(rc != 0 and held in err and not titled('graph node filed by a roleless session'), '0an9j: a graph node by a session that may not file is refused', err)
-    graph.write_text(json.dumps({'nodes': [{'key': 'cr', 'title': 'a roleless session files its own request', 'type': 'change-request', 'description': 'x'},
-                                           {'key': 'item', 'title': 'its item', 'type': 'task', 'description': 'x', 'parent_key': 'cr'}]}))
-    rc, _, err, _ = run('a', 'create', '--graph', str(graph), role='none')
-    check(rc == 0 and titled('its item'), '0an9j: a session files items into the request its plan creates', err)
-    for role in ('solo', None):
-        title = f'filed by {role or "the user"} into the held request'
-        rc, _, err, _ = run('a', 'create', title, '-t', 'task', '--description', 'x', '--parent', held, role=role)
-        check(rc == 0 and titled(title), f'0an9j: {role or "the user"} files into the request solo holds', err)
-    run('a', 'unclaim', held, '--resume', 'writer tests done', role='solo')
+    run('b', 'bd', '--raw', '--yes', 'sync')
 
 
 def t_manual_and_dead_wait() -> None:
     settle('a', 'b')
     check(wait_until(lambda: not waits(), options.seconds * 3), 'idle')
     item = create('a', 'manual sync')
-    rc, out, err, _ = bd('a', 'sync')
+    rc, out, err, _ = run('a', 'bd', '--raw', '--yes', 'sync')
     check(rc == 0, 'a manual sync works, also mid-window', err + out)
-    bd('b', 'dolt', 'pull')
+    run('b', 'bd', '--raw', '--yes', 'dolt', 'pull')
     check(item in items('b'), 'a manual sync sent the write')
     check(wait_until(lambda: not waits(), options.seconds * 3), 'the wait ends with nothing left')
     # A dead wait restarts at the next command.
@@ -929,7 +655,7 @@ def t_manual_and_dead_wait() -> None:
     run('a', 'health')
     check(len(waits()) == 1, 'the next command restarts it', waits())
     check(wait_until(lambda: not waits(), options.seconds * 3), 'the new wait finishes')
-    bd('b', 'dolt', 'pull')
+    run('b', 'bd', '--raw', '--yes', 'dolt', 'pull')
     check(item in items('b'), 'the write went out despite the dead wait')
 
 
@@ -945,7 +671,7 @@ def t_soak() -> None:
         n = 0
         while time.time() < end:
             n += 1
-            rc, out, err, _ = bd(side, 'create', f'{side}{number}-{n}', '-t', 'task', '--description', 'v0', '--silent', role='lead')
+            rc, out, err, _ = run(side, 'create', f'{side}{number}-{n}', '-t', 'task', '--description-file', '-', '--no-commit', stdin='v0')
             with lock:
                 count[0] += 1
                 if rc:
@@ -988,8 +714,8 @@ def conflicted() -> str:
     wait_until(lambda: not waits(), options.seconds * 3)
     victim = create('a', 'victim')
     settle('a', 'b')
-    bd('a', 'delete', victim, '--force')
-    bd('a', 'sync')
+    run('a', 'bd', '--raw', '--yes', 'delete', victim, '--force')
+    run('a', 'bd', '--raw', '--yes', 'sync')
     pulled_just_now('b')
     rc, out, err, _ = run('b', 'field', 'export', victim, '--field', 'description')
     if rc == 0:
@@ -1009,11 +735,11 @@ def t_stopped() -> None:
     rc, out, err, _ = run('b', 'console')
     check(rc == 0 and 'merge conflict' in (json.loads(out).get('sync') or ''), 'stopped sync: the console field names it', out[:200])
     check('other queues' in (json.loads(out).get('queueLine') or '') or json.loads(out).get('queueLine') is None, 'console: the queue line', out[:200])
-    rc, _, err, _ = bd('b', 'create', 'refused', '-t', 'task', '--description', 'x')
+    rc, _, err, _ = run('b', 'create', 'refused', '-t', 'task', '--description-file', '-', '--no-commit', stdin='x')
     check(rc != 0 and 'Merge conflict detected' in err and 'retry' not in err, 'stopped sync: beads refuses writes, no retry', err)
-    rc, out, err, _ = bd('b', 'conflicts', 'resolve', victim, '--theirs')
+    rc, out, err, _ = run('b', 'bd', '--raw', '--yes', 'conflicts', 'resolve', victim, '--theirs')
     if rc:
-        rc, out, err, _ = bd('b', 'conflicts', 'resolve', '--all', '--table', 'issues', '--theirs')
+        rc, out, err, _ = run('b', 'bd', '--raw', '--yes', 'conflicts', 'resolve', '--all', '--table', 'issues', '--theirs')
     check(rc == 0, 'stopped sync: bd conflicts resolve clears it', err + out)
     _, _, err, _ = run('b', 'health')
     check('merge conflict' not in err, 'stopped sync: the line goes with the conflict', err)
@@ -1023,20 +749,20 @@ def t_stopped() -> None:
     check(items('a').keys() == items('b').keys(), 'after the conflict: same items')
     # An id collision.
     wait_until(lambda: not waits(), options.seconds * 3)
-    bd('a', 'create', 'same a', '-t', 'task', '--description', 'x', '--id', 'sb-collide', '--silent')
-    bd('a', 'sync')
+    raw('a', 'create', 'same a', '-t', 'task', '--description', 'x', '--id', 'sb-collide', '--silent')
+    run('a', 'bd', '--raw', '--yes', 'sync')
     pulled_just_now('b')
-    bd('b', 'create', 'same b', '-t', 'task', '--description', 'x', '--id', 'sb-collide', '--silent')
+    raw('b', 'create', 'same b', '-t', 'task', '--description', 'x', '--id', 'sb-collide', '--silent')
     check(wait_until(lambda: sync_state('b').get('kind') == 'conflict', options.seconds * 4), 'an id collision reports a conflict', sync_state('b'))
     rc, _, err, _ = run('b', 'position')
     check('CALL DOLT_MERGE' in err and 'board bd --raw --yes rename' in err, 'the line carries the collision fix', err)
-    rc, out, err, _ = bd('b', 'sql', "CALL DOLT_MERGE('--abort')")
+    rc, out, err, _ = run('b', 'bd', '--raw', '--yes', 'sql', "CALL DOLT_MERGE('--abort')")
     check(rc == 0, 'collision fix: abort', err + out)
-    rc, out, err, _ = bd('b', 'rename', 'sb-collide', 'sb-other')
+    rc, out, err, _ = run('b', 'bd', '--raw', '--yes', 'rename', 'sb-collide', 'sb-other')
     check(rc == 0, 'collision fix: rename', err + out)
-    rc, out, err, _ = bd('b', 'sync')
+    rc, out, err, _ = run('b', 'bd', '--raw', '--yes', 'sync')
     check(rc == 0, 'collision fix: sync', err + out)
-    bd('a', 'sync')
+    run('a', 'bd', '--raw', '--yes', 'sync')
     rows = items('a')
     check('sb-collide' in rows and 'sb-other' in rows, 'collision fix: both items survive')
     _, _, err, _ = run('b', 'health')
@@ -1053,7 +779,7 @@ def t_stopped() -> None:
     check(wait_until(lambda: int(sync_state('a').get('failures') or 0) >= 3, 30), 'failures go on being counted', sync_state('a'))
     _, _, err, _ = run('a', 'health')
     check('sync failing' in err and 'Fix:' in err, 'repeated failures print the problem and the fix', err)
-    rc, _, err, _ = bd('a', 'update', sorted(items('a'))[0], '--title', 'still working')
+    rc, _, err, _ = run('a', 'update', sorted(items('a'))[0], '--title', 'still working')
     check(rc == 0, 'work continues while sync fails', err)
     hidden.rename(ROOT / 'remote.git')
     wait_until(lambda: not waits(), 30)
@@ -1077,7 +803,7 @@ def t_held_elsewhere() -> None:
     check(next(h for h in json.loads(out)['held'] if h['id'] == item)['mark'] == 'elsewhere', 'held elsewhere: the JSON mark')
     rc, _, err, _ = run('a', 'claim', item)
     check(rc == 1 and ("ben's queue" in err), 'held elsewhere: a claim across queues is still refused', err)
-    bd('b', 'update', item, '--remove-label', 'queue:ben', '--add-label', 'queue:anna')
+    raw('b', 'update', item, '--remove-label', 'queue:ben', '--add-label', 'queue:anna')
     settle('a', 'b')
     rc, _, err, _ = run('a', 'claim', item)
     check(rc == 1 and 'held elsewhere' in err and 'board take' not in err, 'held elsewhere: a claim in my own queue says so, offering no take', err)
@@ -1102,14 +828,14 @@ def t_store() -> None:
 def t_inbox() -> None:
     settle('a', 'b')
     stray = create('a', 'stray, older', role=None)
-    bd('a', 'update', stray, '--remove-label', 'queue:anna', role=None)
+    raw('a', 'update', stray, '--remove-label', 'queue:anna')
     time.sleep(1.1)
-    rc, out, err, _ = run('a', 'create', '--for', 'ben', 'found for ben', '-t', 'change-request', '--description', 'x', '--silent', role='agent')
+    rc, out, err, _ = run('a', 'create', '--for', 'ben', 'found for ben', '-t', 'change-request', '--description-file', '-', stdin='x', role='agent')
     found = out.strip().splitlines()[-1] if rc == 0 else ''
     row = items('a').get(found, {})
     check(rc == 0 and {'for:ben', 'queue:anna'} <= set(row.get('labels', [])) and not row.get('assignee'),
           'create --for: in my queue, labelled for the other, held by nobody', err + out)
-    rc, _, err, _ = run('a', 'create', '--for', 'ben', 'child find', '-t', 'change-request', '--description', 'x', '--parent', found, role='agent')
+    rc, _, err, _ = run('a', 'create', '--for', 'ben', 'child find', '-t', 'change-request', '--parent', found, '--description-file', '-', stdin='x', role='agent')
     check(rc == 2 and '--parent' in err, 'create --for refuses --parent', err)
     rc, _, err, _ = run('a', 'claim', found, role='agent')
     check(rc == 1, 'a held find is not claimed', err)
@@ -1152,7 +878,7 @@ def t_inbox() -> None:
     check(rc == 0, 'then it claims', err)
     run('b', 'unclaim', found, '--resume', 'pass it on', role='agent')  # a held record is its holder's to send (nixes-7mt77)
     # route on a find drops for:.
-    rc, out, _, _ = run('a', 'create', '--for', 'ben', 'second find', '-t', 'change-request', '--description', 'x', '--silent', role='agent')
+    rc, out, _, _ = run('a', 'create', '--for', 'ben', 'second find', '-t', 'change-request', '--description-file', '-', stdin='x', role='agent')
     second = out.strip().splitlines()[-1]
     rc, _, err, _ = run('a', 'route', 'ben', second)
     rows = items('a')
@@ -1172,994 +898,41 @@ def t_inbox() -> None:
 
 
 def t_cr() -> None:
-    """The change-request flow against real bd and real git in clone a: claim (worktree, setup), a worker's item, hand-over
-    (rebase, checks, stored pair), agent review, the Accept (look before), a look-after pass that lands, a CR stacked on one in review that lands only after its base, and a landing finished by the next read."""
-    settle('a', 'b')
+    """One change request end to end on clone a's board, through real bd and real git: claim (worktree, branch, recorded
+    base), a worker's item closed with its pass commit, hand-over (checks, stored pair), another session's review, and the Accept that
+    lands it. The rules on each step are the fake-bd suite's (test-agent-configs.py test_board crs parts)."""
     side = ROOT / 'a'
     target = git('symbolic-ref', '--short', 'HEAD', cwd=side).strip()
-
-    def wt(cr: str) -> Path:
-        return side / '.worktrees' / cr
+    worktree = side / '.worktrees'
 
     def meta_of(cr: str) -> dict:
         return items('a')[cr].get('metadata') or {}
 
-    def task(cr: str, title: str) -> str:
-        return bd('a', 'create', title, '-t', 'task', '--description', 'x', '--silent', '--parent', cr)[1].strip().splitlines()[-1]
-
-    def worker_pass(cr: str, item: str, name: str, contents: str | None = None) -> None:
-        (wt(cr) / name).write_text(name + '\n' if contents is None else contents)
-        git('add', name, cwd=wt(cr))
-        git('commit', '-q', '-m', f'{item}: {name}', cwd=wt(cr))
-        sha = git('rev-parse', '--short', 'HEAD', cwd=wt(cr)).strip()
-        rc, out, err, _ = bd('a', 'close', item, '--reason', f'{sha}: {name} written in the pass commit', role='agent')
-        check(rc == 0, f'{cr}: the item {item} closes with its pass commit', err + out)
-
-    def close_open_items(cr: str, role: str = 'agent') -> None:
-        """The worker's part after a Return: its findings are items, and a hand-over or a reject needs them closed. The worker holds the request;
-        a request nobody holds has its items closed by a deciding session."""
-        for item in items('a').values():
-            if item['status'] != 'closed' and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == cr for dep in item.get('dependencies') or []):
-                rc, _, err, _ = run('a', 'close', item['id'], '--reason', 'fixture: the finding is addressed', role=role)
-                check(rc == 0, f'{cr}: item {item["id"]} closes', err)
-
-    def to_review(cr: str, role: str = 'agent') -> None:
-        close_open_items(cr)
-        rc, _, err, _ = run('a', 'handover', cr, 'tests: exit 0', role=role)
-        check(rc == 0 and items('a')[cr]['status'] == 'in_review', f'{cr}: handed over', err)
-
-    def review_pass(cr: str) -> tuple[int, str, str]:
-        rc, _, err, _ = run('a', 'claim', cr, role='solo')
-        check(rc == 0, f'{cr}: another session claims the review by id', err)
-        rc, out, err, _ = run('a', 'handover', cr, 'reviewed: fine', role='solo')
-        return rc, out, err
-
-    (side / 'overlap.txt').write_text('base line one\n' + ''.join(f'base line {n}\n' for n in range(2, 10)))
-    git('add', 'overlap.txt', cwd=side)
-    git('commit', '-q', '-m', 'seed overlap fixture', cwd=side)
-    a = create('a', 'change request A')
-    a1 = task(a, 'A item')
+    cr = create('a', 'change request A')
+    item = run('a', 'create', 'A item', '-t', 'task', '--parent', cr, '--description-file', '-', stdin='x')[1].strip().splitlines()[-1]
     main_tip = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'claim', a, role='agent')
-    check(rc == 0 and wt(a).is_dir() and git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: a claim creates the worktree and branch', err + out)
-    check(meta_of(a).get('base') == target and meta_of(a).get('base_sha') == main_tip and meta_of(a).get('setup_sha') == main_tip,
-          'cr: the claim records the base, the fork point and the setup run', meta_of(a))
-    exclude = Path(git('rev-parse', '--path-format=absolute', '--git-path', 'info/exclude', cwd=side).strip())
-    check(wt(a).parent == side / '.worktrees' and '/.worktrees/' in exclude.read_text().splitlines()
-          and '.worktrees' not in git('status', '--porcelain', '--untracked-files=all', cwd=side),
-          'cr: the worktree lives in <main>/.worktrees, hidden from git status by the local exclude file', exclude.read_text())
-    loose = create('a', 'loose task', '--status', 'open', kind='task')  # raw: the create verb no longer files work outside a change request
-    rc, _, err, _ = run('a', 'claim', loose, role='agent')
-    check(rc == 1 and 'move' in err and not items('a')[loose].get('assignee'), 'cr: a work item outside any change request is refused with the fix', err)
-    rc, _, err, _ = run('a', 'handover', a, 'too early', role='agent')
-    check(rc == 1 and 'items still open' in err, 'cr: hand-over refuses open items', err)
-    worker_pass(a, a1, 'a.txt')
-    overlap = wt(a) / 'overlap.txt'
-    overlap.write_text('CR line one\n' + ''.join(f'base line {n}\n' for n in range(2, 10)))
-    git('add', 'overlap.txt', cwd=wt(a))
-    git('commit', '-q', '-m', 'edit first overlap line', cwd=wt(a))
-    (wt(a) / 'dirty.txt').write_text('x\n')
-    rc, _, err, _ = run('a', 'handover', a, 'dirty', role='agent')
-    check(rc == 1 and 'uncommitted changes' in err, 'cr: hand-over refuses a dirty worktree', err)
-    (wt(a) / 'dirty.txt').unlink()
-    to_review(a)
-    check(items('a')[a]['status'] == 'in_review' and meta_of(a).get('check_result') == 'pass' and meta_of(a).get('check_tip') == git('rev-parse', 'HEAD', cwd=wt(a)).strip(),
-          'cr: hand-over stores the (tip, base tip) check and the review stage', meta_of(a))
-    rc, out, err = review_pass(a)
-    check(rc == 0 and items('a')[a]['status'] == 'passed', 'cr: look before stays at accept after the agent review', err + out)
-    rc, _, err, _ = run('a', 'cr', 'land', a, role='agent')
-    check(rc == 1 and 'only a lead or solo' in err, 'cr: an agent session cannot land', err)
-    tip = git('rev-parse', 'HEAD', cwd=wt(a)).strip()
-    rc, _, err, _ = run('a', 'cr', 'land', a, '--tip', main_tip, '--base', main_tip)
-    check(rc == 1 and 'branch moved' in err and git('rev-parse', target, cwd=side).strip() == main_tip, 'cr: land --tip refuses a moved branch', err)
-    rc, out, err, _ = run('a', 'review', 'open', a, role='solo')
-    check(rc == 0 and meta_of(a).get('opened_tip') == tip, 'cr: the user opens the reviewed branch at its seen tip', err + out)
-    (side / 'land-base.txt').write_text('base moved after Accept\n')
-    (side / 'overlap.txt').write_text('base line one\n' + ''.join(f'base line {n}\n' for n in range(2, 9)) + 'main line nine\n')
-    git('add', 'land-base.txt', cwd=side)
-    git('add', 'overlap.txt', cwd=side)
-    git('commit', '-q', '-m', 'advance target after Accept', cwd=side)
-    moved_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', a, '--tip', tip, '--base', main_tip)
-    check(rc == 1 and items('a')[a]['status'] == 'passed'
-          and git('rev-parse', target, cwd=side).strip() == moved_base
-          and 'advance target after Accept' in (err + out),
-          'cr: a moved base refuses the seen pair and shows incoming commits without changing coverage', err + out)
-    rc, console, err, _ = run('a', 'console')
-    row = next(one for one in json.loads(console)['crs'] if one['id'] == a)
-    incoming = row['acceptance']['incomingCommits']
-    moved = next(one for one in incoming if one['subject'] == 'advance target after Accept')
-    check(rc == 0 and row['acceptance']['incomingBaseTip'] == main_tip
-          and 'land-base.txt' in moved['files'] and moved['crFiles'] == ['overlap.txt'],
-          'cr: the Accept JSON lists incoming commits and marks paths overlapping CR files', err + str(row['acceptance']))
-    rc, out, err, _ = run('a', 'cr', 'land', a, '--tip', tip, '--base', moved_base)
-    landed = meta_of(a)
-    rebased_tip = git('rev-parse', target, cwd=side).strip()
-    check(rc == 0 and landed.get('check_result') == 'pass',
-          'cr: one Accept call rebases and checks the exact current row pair', err + out)
-    check(rc == 0 and items('a')[a]['status'] == 'closed' and landed.get('review_tip') == tip
-          and landed.get('review_base_tip') == main_tip and landed.get('check_result') == 'pass'
-          and landed.get('check_tip') == rebased_tip and landed.get('check_base_tip') == moved_base,
-          'cr: one exact current pair lands with its passing check and clean replay', err + out + str(landed))
-    check(not meta_of(a).get('opened_tip') and not wt(a).exists()
-          and not git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: land removes the CR worktree and branch')
-
-    a_stale = create('a', 'stale seen pair')
-    stale_item = task(a_stale, 'stale pair item')
-    run('a', 'claim', a_stale, role='agent')
-    worker_pass(a_stale, stale_item, 'stale.txt')
-    to_review(a_stale)
-    review_pass(a_stale)
-    stale_seen = git('rev-parse', f'refs/heads/cr/{a_stale}', cwd=side).strip()
-    stale_base = git('rev-parse', target, cwd=side).strip()
-    (side / 'stale-base-one.txt').write_text('first incoming base move\n')
-    git('add', 'stale-base-one.txt', cwd=side)
-    git('commit', '-q', '-m', 'move base for stale pair', cwd=side)
-    moved_again = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', stale_base)
-    check(rc == 1 and 'base moved since the pair you saw' in err and 'move base for stale pair' in out
-          and git('rev-parse', target, cwd=side).strip() == moved_again
-          and meta_of(a_stale).get('review_tip') == stale_seen,
-          'cr: a stale base pin refuses without advancing review coverage', err + out)
-    (side / 'stale-base-two.txt').write_text('second incoming base move\n')
-    git('add', 'stale-base-two.txt', cwd=side)
-    git('commit', '-q', '-m', 'move base after refresh', cwd=side)
-    newest_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', moved_again)
-    check(rc == 1 and 'base moved since the pair you saw' in err and 'move base after refresh' in out
-          and items('a')[a_stale]['status'] == 'passed',
-          'cr: concurrent target movement invalidates the exact refreshed pins', err + out)
-    rc, piped = run_piped('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', moved_again)
-    lines = piped.strip().splitlines()
-    step = lines[-1] if lines else ''
-    command = step.split('then ', 1)[1].split() if 'then agents board cr land ' in step else []
-    check(rc == 1 and step.startswith('next: ask the user to Accept the incoming commits')
-          and piped.index('move base after refresh') < piped.index('base moved since the pair you saw')
-          and command[:5] == ['agents', 'board', 'cr', 'land', a_stale] and command[-1] == newest_base,
-          'cr: a piped stale-base refusal ends with the reason, then the next step naming the current pair', piped)
-    rc, out, err, _ = run('a', *command[2:])
-    next_tip = meta_of(a_stale).get('check_tip')
-    check(rc == 0 and items('a')[a_stale]['status'] == 'closed'
-          and git('rev-parse', target, cwd=side).strip() == next_tip,
-          'cr: the latest exact pair lands after a fresh passing check', err + out)
-
-    direct_land = create('a', 'direct route moved-base landing')
-    direct_land_item = task(direct_land, 'direct route landing item')
-    run('a', 'claim', direct_land, role='agent')
-    worker_pass(direct_land, direct_land_item, 'direct-land.txt')
-    rc, out, err, _ = run('a', 'handover', direct_land, 'documentation only', '--no-agent-review', 'documentation only', role='agent')
-    direct_seen = git('rev-parse', f'refs/heads/cr/{direct_land}', cwd=side).strip()
-    direct_seen_base = git('rev-parse', target, cwd=side).strip()
-    (side / 'direct-land-base.txt').write_text('unrelated incoming change for direct route\n')
-    git('add', 'direct-land-base.txt', cwd=side)
-    git('commit', '-q', '-m', 'move base for direct route land', cwd=side)
-    direct_moved_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', direct_land, '--tip', direct_seen, '--base', direct_seen_base)
-    check(rc == 1 and 'move base for direct route land' in out and 'base moved since the pair you saw' in err
-          and meta_of(direct_land).get('no_agent_review_reason') == 'documentation only',
-          'cr: direct user coverage also refuses a moved seen pair', err + out)
-    (side / 'direct-land.txt').write_text('overlapping user edit\n')
-    rc, out, err, _ = run('a', 'cr', 'land', direct_land, '--tip', direct_seen, '--base', direct_moved_base)
-    direct_rebased_tip = git('rev-parse', f'refs/heads/cr/{direct_land}', cwd=side).strip()
-    direct_check_at = meta_of(direct_land).get('check_at')
-    blocked_pending = meta_of(direct_land)
-    check(rc == 1 and 'land blocked' in err and blocked_pending.get('landing') is None
-          and blocked_pending.get('review_tip') is None and blocked_pending.get('no_agent_review_reason') == 'documentation only'
-          and git('rev-parse', target, cwd=side).strip() == direct_moved_base,
-          'cr: a failed land preflight leaves direct-route coverage unchanged', err + out + str(blocked_pending))
-    (side / 'direct-land.txt').unlink()
-    rc, out, err, _ = run('a', 'cr', 'land', direct_land, '--tip', direct_rebased_tip, '--base', direct_moved_base)
-    direct_landed = meta_of(direct_land)
-    check(rc == 0 and items('a')[direct_land]['status'] == 'closed'
-          and direct_landed.get('review_tip') is None
-          and direct_landed.get('no_agent_review_reason') == 'documentation only' and direct_landed.get('check_at') == direct_check_at,
-          'cr: successful direct-route landing keeps only its reason and reuses its check', err + out + str(direct_landed))
-
-    b = create('a', 'change request B', '--look', 'after')
-    b1 = task(b, 'B item')
-    run('a', 'claim', b, role='agent')
-    worker_pass(b, b1, 'b.txt')
-    to_review(b)
-    before = git('rev-parse', target, cwd=side).strip()
-    rc, out, err = review_pass(b)
-    check(rc == 0 and git('rev-parse', target, cwd=side).strip() != before and items('a')[b]['status'] == 'closed'
-          and (items('a')[b].get('metadata') or {}).get('outcome') == 'landed',
-          'cr: a look-after pass lands the request, closed as landed', err + out)
-
-    design = create('a', 'design CR C', '--look', 'after')
-    design_item = create('a', 'C design', '--parent', design, kind='design')
-    run('a', 'claim', design, role='agent')
-    worker_pass(design, design_item, 'design.txt')
-    to_review(design)
-    affected_design = create('a', 'affected design', '--parent', design, kind='design')  # work the review opens while the CR waits in review
-    ruling = create('a', 'change the design', '-t', 'decision', kind='decision')
-    record = ROOT / 'planner-return-record.md'
-    record.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
-    rc, out, err, _ = run('a', 'wait', affected_design, '--on', ruling)
-    check(rc == 0 and items('a')[design]['status'] == 'in_review', 'cr: a question hold alone keeps the review phase', err + out)
-    rc, out, err, _ = run('a', 'claim', ruling)
-    check(rc == 0, 'cr: the lead takes the question to record the ruling', err + out)
-    rc, out, err, _ = run('a', 'ruling', 'record', ruling, str(record))
-    check(rc == 0, 'cr: record the ruling that changes the design', err + out)
-    rc, out, err, _ = run('a', 'ruling', 'release', ruling)
-    check(rc == 0 and items('a')[design]['status'] == 'in_review', 'cr: release alone keeps the review phase', err + out)
-    rc, out, err, _ = run('a', 'claim', ruling, role='solo')
-    check(rc == 0, 'cr: planner takes the released ruling', err + out)
-    review_tip = git('rev-parse', 'HEAD', cwd=wt(design)).strip()
-    rc, out, err, _ = run('a', 'return', design, 'Rework the design under this ruling', '--ruling', ruling, role='solo')
-    returned = items('a')
-    check(rc == 0 and returned[design]['status'] == 'open' and not returned[design].get('assignee')
-          and returned[affected_design]['status'] == 'open' and git('rev-parse', 'HEAD', cwd=wt(design)).strip() == review_tip,
-          'cr: explicit planner return reopens the review without rewriting the branch', err + out)
-    rc, out, err, _ = run('a', 'close', ruling, '--reason', 'planned the design rework', role='solo')
-    check(rc == 0, 'cr: the planner closes the applied ruling', err + out)
-    run('a', 'claim', design, role='agent')
-    worker_pass(design, affected_design, 'design-rework.txt')
-    to_review(design)
-    rc, out, err = review_pass(design)
-    check(rc == 0 and items('a')[design]['status'] == 'closed' and (items('a')[design].get('metadata') or {}).get('outcome') == 'landed',
-          'cr: a look-after design CR lands on the reviewer pass like any other', err + out)
-
-    finished = create('a', 'autopilot finished CR', '--status', 'passed')
-    rc, _, err, _ = run('a', 'cr', 'land', finished, role='autopilot')
-    check(rc != 0 and 'only a lead or solo' in err and items('a')[finished]['status'] == 'passed',
-          f'{finished}: autopilot is refused a land', err)
-    waiting_finished = create('a', 'autopilot finished CR that waits', '--status', 'passed')
-    bd('a', 'dep', 'add', waiting_finished, create('a', 'autopilot finished CR blocker', kind='task'))
-    for named in (finished, waiting_finished):  # the waiting one took the named Accept override before
-        rc, _, err, _ = run('a', 'claim', named, role='autopilot')
-        check(rc != 0 and "user's Accept" in err and not items('a')[named].get('assignee'),
-              f'{named}: autopilot is refused a named claim of a finished CR', err)
-    design_accept = create('a', 'design-only CR at Accept', '--status', 'passed')
-    create('a', f'{design_accept} design', '--parent', design_accept, kind='design')
-    rc, _, err, _ = run('a', 'claim', design_accept, role='autopilot')
-    check(rc != 0 and "user's Accept" in err and not items('a')[design_accept].get('assignee'),
-          f'{design_accept}: autopilot has no Accept authority over a design-only CR', err)
-    rc, _, err, _ = run('a', 'cr', 'reject', finished, 'autopilot cannot undo a rejection', role='autopilot')
-    check(rc != 0 and items('a')[finished]['status'] == 'passed', f'{finished}: autopilot is refused a reject, which no one reopens', err)
-    rc, _, err, _ = run('a', 'return', design_accept, 'rework the design', role='autopilot')
-    check(rc == 0 and items('a')[design_accept]['status'] == 'open', f'{design_accept}: autopilot may return a passed CR, a two-way move', err)
-    accept_queue = create('a', 'autopilot bare Accept queue', kind='epic')
-    finished_in_queue = create('a', 'finished CR in autopilot queue', '--status', 'passed', '--parent', accept_queue)
-    design_in_queue = create('a', 'design-only CR in autopilot queue', '--status', 'passed', '--parent', accept_queue)
-    create('a', f'{design_in_queue} design', '--parent', design_in_queue, kind='design')
-    rc, output, err, _ = run('a', 'claim', '--root', accept_queue, role='autopilot')
-    accepted_queue_items = items('a')
-    check(accepted_queue_items[design_in_queue].get('assignee') is None and accepted_queue_items[finished_in_queue].get('assignee') is None,
-          'autopilot bare claim takes no CR waiting for the user, a design-only one included', err + output)
-    for unused_accept in (finished, waiting_finished, design_accept, finished_in_queue, design_in_queue):
-        close_open_items(unused_accept, role='solo')
-        rc, out, err, _ = run('a', 'cr', 'reject', unused_accept, 'test fixture cleanup', role='solo')
-        check(rc == 0 and items('a')[unused_accept]['status'] == 'closed',
-              f'{unused_accept}: the negative Accept fixture leaves the queue', err + out)
-    rc, out, err, _ = raw('a', 'create', 'legacy checkpoint CR', '--type', 'change-request', '--description', 'x', '--metadata', '{"checkpoint":"user"}', '--silent')
-    legacy_cr = out.strip().splitlines()[-1] if out.strip() else ''
-    rc, report, err, _ = run('a', 'check')
-    check(any(legacy_cr in row and 'cr-checkpoint' in row and 'board-migrate' in row for row in report.splitlines())
-          and not any(legacy_cr in row and 'unknown-metadata' in row for row in report.splitlines()),
-          'board check lists a live CR still carrying checkpoint metadata, naming board-migrate', err + report)  # check exits non-zero while a deviation stands
-    bd('a', 'close', legacy_cr, '--reason', 'test fixture cleanup', '--force')
-
-    base_cr, child_cr = create('a', 'stack base P'), create('a', 'stack child C')
-    p1, c1 = task(base_cr, 'P item'), task(child_cr, 'C item')
-    bd('a', 'dep', 'add', child_cr, base_cr)
-    rc, _, err, _ = run('a', 'claim', child_cr, role='agent')
-    check(rc == 1 and 'waits on' in err, 'cr: a CR waits while the CR it depends on is in work', err)
-    run('a', 'claim', base_cr, role='agent')
-    worker_pass(base_cr, p1, 'p.txt')
-    to_review(base_cr)
-    rc, _, err, _ = run('a', 'claim', child_cr, role='agent')
-    check(rc == 1 and 'waits on' in err, 'cr: a CR does not build on a parent still in agent review', err)
-    review_pass(base_cr)
-    rc, out, err, _ = run('a', 'claim', child_cr, role='agent')
-    check(rc == 0 and meta_of(child_cr).get('base') == base_cr, 'cr: a CR builds on the parent waiting for the user, which becomes its base', err + out)
-    worker_pass(child_cr, c1, 'c.txt')
-    to_review(child_cr)
-    review_pass(child_cr)
-    rc, _, err, _ = run('a', 'cr', 'land', child_cr)
-    check(rc == 1 and 'has not landed' in err, 'cr: a CR with a CR base never lands before its base', err)
-    base_tip = git('rev-parse', 'HEAD', cwd=wt(base_cr)).strip()
-    base_pair_tip = git('rev-parse', f'refs/heads/cr/{base_cr}', cwd=side).strip()
-    base_pair_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', base_cr, '--tip', base_pair_tip, '--base', base_pair_base)
-    check(rc == 0 and meta_of(child_cr).get('base') == target and items('a')[base_cr]['status'] == 'closed',
-          'cr: landing the base resets the CRs stacked on it to the target', err + out)
-    child_tip = git('rev-parse', 'HEAD', cwd=wt(child_cr)).strip()
-    child_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', child_cr, '--tip', child_tip, '--base', child_base)
-    check(rc == 0 and git('rev-parse', target, cwd=side).strip() == child_tip and subprocess.run(['git', 'merge-base', '--is-ancestor', base_tip, target], cwd=side).returncode == 0,
-          'cr: the child lands once its base has', err + out)
-
-    d = create('a', 'derived landing')
-    d1 = task(d, 'D item')
-    run('a', 'claim', d, role='agent')
-    worker_pass(d, d1, 'd.txt')
-    to_review(d)
-    review_pass(d)
-    git('merge', '-q', '--ff-only', f'cr/{d}', cwd=side)  # the fast-forward done, the close not
-    rc, _, err, _ = run('a', 'queue')
-    check(rc == 0 and items('a')[d]['status'] == 'closed' and not wt(d).exists(), 'cr: a tip the target holds closes its CR on the next read', err)
-
-    e = create('a', 'returned CR')
-    e1 = task(e, 'E item')
-    run('a', 'claim', e, role='agent')
-    worker_pass(e, e1, 'e.txt')
-    to_review(e)
-    review_pass(e)
-    covered = meta_of(e).get('review_tip')
-    rc, _, err, _ = run('a', 'return', e, 'rename the file', role='solo')
-    row = items('a')[e]
-    check(rc == 0 and row['status'] == 'open' and not row.get('assignee') and wt(e).is_dir() and git('branch', '--list', f'cr/{e}', cwd=side).strip()
-          and meta_of(e).get('review_tip') == covered, 'cr: Return keeps the prior reviewed range and leaves the worktree and branch', err)
-    rc, _, err, _ = run('a', 'cr', 'reject', e, 'the approach fails')
-    check(rc == 1 and items('a')[e]['status'] == 'open' and 'items still open' in err, 'cr: reject refuses while items are open, naming the way out', err)
-    close_open_items(e, role='solo')  # the Return left the request unheld: a deciding session closes its items
-    rc, out, err, _ = run('a', 'cr', 'reject', e, 'the approach fails')
-    check(rc == 0 and items('a')[e]['status'] == 'closed' and git('branch', '--list', f'cr/{e}', cwd=side).strip() and wt(e).is_dir(),
-          'cr: reject closes it unlanded, the branch and worktree stay until confirmed', err + out)
-
-    # A wait is met only by a delivering close (model.md Waits): a reject or a dropped close refuses while a live record waits on it.
-    kept, gone = create('a', 'keeps waiting'), create('a', 'rejected while waited on')
-    gone_item, kept_item, gone_done = task(gone, 'G item'), task(kept, 'K item'), task(gone, 'G done item')
-    kept_other = task(create('a', 'waits on a done item'), 'O item')
-    check(run('a', 'wait', kept, '--on', gone, '--for', 'needs its output', role='solo')[0] == 0
-          and run('a', 'wait', kept_item, '--on', gone_item, '--for', 'needs its output', role='solo')[0] == 0
-          and run('a', 'wait', kept_other, '--on', gone_done, '--for', 'needs its output', role='solo')[0] == 0, 'drop: waits on a CR and on its items')
-    rc, _, err, _ = run('a', 'close', gone_item, '--reason', 'dropped while a record waits on it', '--outcome', 'dropped', role='solo')
-    check(rc != 0 and kept_item in err and items('a')[gone_item]['status'] == 'open', 'drop: closing an item dropped refuses while a record waits on it, naming the waiter', err)
-    rc, _, err, _ = run('a', 'close', gone_item, kept_item, '--reason', 'dropped together in one call', '--outcome', 'dropped', role='solo')
-    check(rc == 0 and items('a')[gone_item]['status'] == 'closed' and items('a')[kept_item]['status'] == 'closed', 'drop: records closed dropped in one call do not block each other', err)
-    check(run('a', 'close', gone_done, '--reason', 'done while a record waits on it', role='solo')[0] == 0, 'drop: a done close meets its waiters')
-    rc, _, err, _ = run('a', 'cr', 'reject', gone, 'the work is moot')
-    check(rc != 0 and kept in err and kept_other in err and items('a')[gone]['status'] == 'open', 'drop: reject refuses while a CR or an item of another waits on it or its items, naming them', err)
-    check(run('a', 'unlink', kept, gone)[0] == 0 and run('a', 'unlink', kept_other, gone_done)[0] == 0
-          and run('a', 'cr', 'reject', gone, 'the work is moot')[0] == 0 and items('a')[gone]['status'] == 'closed', 'drop: unlinking the waits lets the reject through')
-    run('a', 'bd', '--raw', '--yes', 'dep', 'add', kept, gone)  # a wait written outside the verbs
-    rc, out, err, _ = run('a', 'check', '--json')
-    found = json.loads(out)['deviations'] if rc == 0 else []
-    check(any(d['id'] == kept and d['class'] == 'dropped-blocker' and gone in d['detail'] for d in found), 'drop: check reports a live wait on a record closed dropped', err + out[-400:])
-    run('a', 'unlink', kept, gone)
-
-    # A drop refuses under a deferred waiter too, and no new wait lands on a record closed dropped (a question excepted): nixes-ze5lx.
-    drop_a, drop_b, drop_c = (create('a', f'drop probe {name}', '--no-commit', kind='task') for name in 'abc')
-    check(run('a', 'wait', drop_a, '--on', drop_b, '--for', 'needs its output')[0] == 0 and run('a', 'defer', drop_a, '--reason', 'parked while it waits')[0] == 0,
-          'drop: a deferred task waits on a task')
-    rc, _, err, _ = run('a', 'close', drop_b, '--reason', 'dropped under a deferred waiter', '--outcome', 'dropped')
-    check(rc != 0 and drop_a in err and items('a')[drop_b]['status'] == 'open', 'drop: a dropped close refuses under a deferred waiter, naming it', err)
-    rc, _, err, _ = run('a', 'defer', drop_b, '--reason', 'defer the target of a deferred waiter')
-    check(rc == 0, 'drop: defer keeps its own rule: only live waiters hold a deferral back', err)
-    check(run('a', 'undefer', drop_b)[0] == 0 and run('a', 'undefer', drop_a)[0] == 0 and run('a', 'close', drop_b, drop_a, '--reason', 'dropped together in one call', '--outcome', 'dropped')[0] == 0
-          and items('a')[drop_b]['status'] == 'closed', 'drop: a waiter closed in the same call does not hold it')
-    rc, _, err, _ = run('a', 'wait', drop_c, '--on', drop_b, '--for', 'needs its output')
-    check(rc != 0 and drop_b in err and 'dropped' in err, 'drop: wait refuses a record closed dropped', err)
-    rc, _, err, _ = run('a', 'create', 'waits on a dropped one', '--no-commit', '--description', 'x', '--deps', drop_b)
-    check(rc != 0 and drop_b in err and 'dropped' in err, 'drop: create --deps refuses a record closed dropped', err)
-    plan = ROOT / 'dropped-wait.json'
-    plan.write_text(json.dumps({'nodes': [{'key': 'n', 'title': 'graph node', 'type': 'task', 'description': 'x', 'no_commit': True,
-                                           'waits_on': [{'on': drop_b, 'for': 'its output'}]}]}))
-    rc, _, err, _ = run('a', 'create', '--graph', str(plan))
-    check(rc != 0 and drop_b in err and 'dropped' in err, 'drop: a graph node waiting on one refuses a record closed dropped', err)
-    question = create('a', 'a question dropped', '-t', 'decision')
-    rc, _, err, _ = run('a', 'close', question, '--reason', 'the question is moot', '--outcome', 'dropped')
-    check(rc == 0 and run('a', 'wait', drop_c, '--on', question)[0] == 0, 'drop: a wait on a question closed dropped is accepted', err)
-    run('a', 'unlink', drop_c, question)
-
-    # Work outside a change request is refused at create: a work task files in a CR or commits nothing here.
-    rc, _, err, _ = run('a', 'create', 'loose work', '-t', 'task', '--description', 'x', '--silent', filed=False)
-    check(rc != 0 and '--parent' in err and '--no-commit' in err, 'loose: create refuses a work task outside a change request, naming --parent and --no-commit', err)
-    probe_task = create('a', 'a probe', '--no-commit', kind='task')
-    rc, _, err, _ = run('a', 'update', probe_task, '--commits')
-    check(rc == 2 and 'unrecognized arguments' in err, 'loose: update has no --commits', err)
-    milestone = create('a', 'a milestone', kind='milestone')
-    rc, _, err, _ = run('a', 'create', 'loose under a milestone', '-t', 'task', '--description', 'x', '--silent', '--parent', milestone, filed=False)
-    check(rc != 0 and 'change request' in err, 'loose: create refuses a milestone parent for a work task', err)
-    probe_home = create('a', 'a probe moves in')
-    rc, _, err, _ = run('a', 'move', probe_task, '--to', probe_home)
-    check(rc == 0 and not (items('a')[probe_task].get('metadata') or {}).get('no_commit'), 'loose: move into a change request clears no_commit', err)
-
-    f = create('a', 'direct user review')
-    f1 = task(f, 'F item')
-    run('a', 'claim', f, role='agent')
-    worker_pass(f, f1, 'f.txt')
-    rc, out, err, _ = run('a', 'handover', f, 'changelog only', '--no-agent-review', 'merged changelog bullet', role='agent')
-    direct_tip = git('rev-parse', 'HEAD', cwd=wt(f)).strip()
-    direct_base_tip = git('rev-parse', target, cwd=side).strip()
-    direct_meta = meta_of(f)
-    check(rc == 0 and items('a')[f]['status'] == 'passed' and direct_meta.get('no_agent_review_reason') == 'merged changelog bullet',
-          'cr: eligible no-agent handover reaches Accept with its reason', err + out)
-    (side / 'f.txt').write_text('uncommitted edit that overlaps the landing\n')
-    rc, out, err, _ = run('a', 'cr', 'land', f, '--tip', direct_tip, '--base', direct_base_tip)
-    failed_meta = meta_of(f)
-    check(rc == 1 and 'land blocked' in err and failed_meta.get('review_tip') is None
-          and failed_meta.get('no_agent_review_reason') == 'merged changelog bullet',
-          'cr: a refused direct Accept does not record operative user review coverage', err + str(failed_meta))
-    (side / 'f.txt').unlink()
-    rc, out, err, _ = run('a', 'cr', 'land', f, '--tip', direct_tip, '--base', direct_base_tip)
-    final_meta = meta_of(f)
-    check(rc == 0 and items('a')[f]['status'] == 'closed' and final_meta.get('review_tip') is None and final_meta.get('no_agent_review_reason') == 'merged changelog bullet',
-          'cr: direct Accept lands with its route reason', err + out)
-
-    h = create('a', 'direct review with a moved base')
-    h1 = task(h, 'H item')
-    run('a', 'claim', h, role='agent')
-    worker_pass(h, h1, 'h.txt')
-    rc, out, err, _ = run('a', 'handover', h, 'changelog only', '--no-agent-review', 'merged changelog bullet', role='agent')
-    h_tip = git('rev-parse', 'HEAD', cwd=wt(h)).strip()
-    h_base = git('rev-parse', target, cwd=side).strip()
-    (side / 'direct-base.txt').write_text('incoming unrelated change\n')
-    git('add', 'direct-base.txt', cwd=side)
-    git('commit', '-q', '-m', 'move base for direct review', cwd=side)
-    direct_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', h, '--tip', h_tip, '--base', h_base)
-    check(rc == 1 and 'move base for direct review' in out and 'base moved since the pair you saw' in err,
-          'cr: a direct user route refuses a moved seen pair and shows incoming commits', err + out)
-    rc, _, err, _ = run('a', 'cr', 'request-review', h, 'incoming change affects this CR', role='agent')
-    check(rc == 1 and 'send to review is for' in err,
-          'cr: an unheld non-deciding session cannot request review', err)
-    rc, out, err, _ = run('a', 'claim', h, role='agent')
-    check(rc == 0, 'cr: a current CR holder can take the request', err + out)
-    rc, out, err, _ = run('a', 'cr', 'request-review', h, 'incoming change affects this CR', role='agent')
-    check(rc == 0 and items('a')[h]['status'] == 'in_review' and 'requested agent review' in out,
-          'cr: the current holder can route relevant changes without a lead detour', err + out)
-    rc, out, err = review_pass(h)
-    check(rc == 1 and 'tip moved' in err + out,
-          'cr: the first review gate reports its moved tip before recording a verdict', err + out)
-    rc, out, err = review_pass(h)
-    after_review_tip = git('rev-parse', 'HEAD', cwd=wt(h)).strip()
-    after_review_base = git('rev-parse', target, cwd=side).strip()
-    check(rc == 0 and items('a')[h]['status'] == 'passed',
-          'cr: review passes after a moved-base Accept requests review', err + out)
-    rc, out, err, _ = run('a', 'cr', 'land', h, '--tip', after_review_tip, '--base', after_review_base, role='solo')
-    check(rc == 0 and items('a')[h]['status'] == 'closed' and git('rev-parse', target, cwd=side).strip() == after_review_tip,
-          'cr: exact current pair lands after the requested review passes', err + out)
-
-    i = create('a', 'prior agent coverage with a direct route')
-    i1 = task(i, 'I item')
-    run('a', 'claim', i, role='agent')
-    worker_pass(i, i1, 'i.txt')
-    to_review(i)
-    rc, out, err = review_pass(i)
-    prior_agent_tip = meta_of(i).get('review_tip')
-    prior_agent_base = meta_of(i).get('review_base_tip')
-    check(rc == 0 and items('a')[i]['status'] == 'passed' and prior_agent_tip,
-          'cr: the prior coverage route starts with a real agent review', err + out)
-    rc, out, err, _ = run('a', 'return', i, 'the remaining note is documentation only', role='solo')
-    check(rc == 0 and items('a')[i]['status'] == 'open', 'cr: the direct route can follow a user Return', err + out)
-    run('a', 'claim', i, role='agent')
-    (wt(i) / 'i-doc.txt').write_text('documentation-only follow-up\n')
-    git('add', 'i-doc.txt', cwd=wt(i))
-    git('commit', '-q', '-m', 'documentation-only follow-up', cwd=wt(i))
-    close_open_items(i)
-    rc, out, err, _ = run('a', 'handover', i, 'documentation-only follow-up', '--no-agent-review', 'documentation only', role='agent')
-    check(rc == 0 and meta_of(i).get('review_tip') == prior_agent_tip
-          and meta_of(i).get('review_base_tip') == prior_agent_base and items('a')[i]['status'] == 'passed',
-          'cr: direct routing preserves the historical agent review pair', err + out)
-    (side / 'i-base.txt').write_text('unrelated incoming base change\n')
-    git('add', 'i-base.txt', cwd=side)
-    git('commit', '-q', '-m', 'move base for prior direct route', cwd=side)
-    direct_i_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'refresh', i, role='agent')
-    direct_i_tip = git('rev-parse', 'HEAD', cwd=wt(i)).strip()
-    check(rc == 0 and items('a')[i]['status'] == 'passed' and out.count('move base for prior direct route') == 1,
-          'cr: refresh rebases and checks without advancing coverage', err + out)
-    refreshed_i = meta_of(i)
-    check(refreshed_i.get('no_agent_review_reason') == 'documentation only'
-          and refreshed_i.get('review_tip') == prior_agent_tip and refreshed_i.get('review_base_tip') == prior_agent_base,
-          'cr: refresh preserves existing agent coverage', err + out + str(refreshed_i))
-    rc, out, err, _ = run('a', 'review', 'open', i, role='solo')
-    check(rc == 0, 'cr: the user sees the no-agent series before a conflict', err + out)
-    run('a', 'cr', 'edits', i, '--tip', direct_i_tip, '--commit', role='solo')
-    (side / 'i-doc.txt').write_text('main added this file too\n')
-    git('add', 'i-doc.txt', cwd=side)
-    git('commit', '-q', '-m', 'conflict with no-agent series', cwd=side)
-    rc, out, err, _ = run('a', 'cr', 'refresh', i, role='agent')
-    check(rc == 1 and 'stopped on a conflict' in err, 'cr: refresh stops at the no-agent conflict', err + out)
-    (wt(i) / 'i-doc.txt').write_text('resolved documentation change\n')
-    git('add', 'i-doc.txt', cwd=wt(i))
-    rc, out, err, _ = run('a', 'cr', 'refresh', i, role='agent')
-    direct_i_tip = git('rev-parse', 'HEAD', cwd=wt(i)).strip()
-    _, console, _, _ = run('a', 'console')
-    row_i = next(one for one in json.loads(console)['crs'] if one['id'] == i)
-    delta_i = row_i['acceptance']['delta'] or ''
-    check(rc == 0 and row_i['status'] == 'passed' and not row_i['acceptance']['fullChange']
-          and row_i['acceptance']['seenTip'] != direct_i_tip and 'documentation-only follow-up' in delta_i
-          and any(line.split()[2:3] in (['!'], ['>']) for line in delta_i.splitlines()),
-          'cr: a resolved no-agent series stays at Accept with its changed delta', err + out + str(row_i['acceptance']))
-    rc, out, err, _ = run('a', 'cr', 'request-review', i, 'the incoming change affects this documentation', role='solo')
-    check(rc == 0 and items('a')[i]['status'] == 'in_review' and meta_of(i).get('review_tip') == prior_agent_tip,
-          'cr: a lead can route relevant incoming changes while preserving old agent coverage', err + out)
-    rc, out, err, _ = run('a', 'claim', i, role='solo')  # the author's own session never reviews it
-    check(rc == 0 and 'range-diff since the last covered series' in out and 'documentation-only follow-up' in out,
-          'cr: the re-review sees the uncovered author follow-up', err + out)
-    rc, out, err, _ = run('a', 'handover', i, 'reviewed the uncovered documentation change', role='solo')
-    check(rc == 0 and items('a')[i]['status'] == 'passed'
-          and meta_of(i).get('review_tip') == direct_i_tip,
-          'cr: the agent can pass the request for review after reading the uncovered range', err + out)
-
-    j = create('a', 'recorded user edit after a base move')
-    j1 = task(j, 'J item')
-    run('a', 'claim', j, role='agent')
-    worker_pass(j, j1, 'j.txt')
-    to_review(j)
-    rc, out, err = review_pass(j)
-    j_covered_tip, j_covered_base = meta_of(j).get('review_tip'), meta_of(j).get('review_base_tip')
-    check(rc == 0 and items('a')[j]['status'] == 'passed' and j_covered_tip and j_covered_base,
-          'cr: recorded-user-edit case starts from current agent coverage', err + out)
-    git('config', 'user.name', 'Test User', cwd=side)
-    git('config', 'user.email', 'test@example.test', cwd=side)
-    rc, out, err, _ = run('a', 'review', 'open', j, role='solo')
-    j_seen_tip = meta_of(j).get('user_seen_tip')
-    check(rc == 0 and j_seen_tip == j_covered_tip, 'cr: the user opened the covered series before editing', err + out)
-    (wt(j) / 'j.txt').write_text('user edit after agent review\n')
-    (side / 'j-base.txt').write_text('incoming base change during user edits\n')
-    git('add', 'j-base.txt', cwd=side)
-    git('commit', '-q', '-m', 'move base during user edits', cwd=side)
-    j_moved_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'edits', j, '--tip', j_seen_tip, '--commit', '-m', 'record user edit', role='solo')
-    j_after_edit = meta_of(j)
-    check(rc == 0 and items('a')[j]['status'] == 'passed'
-          and j_after_edit.get('review_tip') == j_covered_tip and j_after_edit.get('review_base_tip') == j_covered_base
-          and j_after_edit.get('user_seen_base_tip') == j_covered_base
-          and j_after_edit.get('base_sha') == j_moved_base,
-          'cr: recorded user edits after a base move keep prior coverage and remain at Accept', err + out + str(j_after_edit))
-    j_current_tip = git('rev-parse', f'refs/heads/cr/{j}', cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', j, '--tip', j_current_tip, '--base', j_moved_base)
-    check(rc == 0 and items('a')[j]['status'] == 'closed' and meta_of(j).get('review_tip') == j_covered_tip
-          and meta_of(j).get('review_base_tip') == j_covered_base,
-          'cr: a user edit cleanly replayed on the moved base lands on the exact current pair', err + out)
-
-    k = create('a', 'first Accept look after a base move')
-    k1 = task(k, 'K item')
-    run('a', 'claim', k, role='agent')
-    worker_pass(k, k1, 'k.txt')
-    k_fork = meta_of(k).get('base_sha')
-    rc, out, err, _ = run('a', 'handover', k, 'documentation-only change', '--no-agent-review', 'documentation only', role='agent')
-    check(rc == 0 and items('a')[k]['status'] == 'passed' and k_fork,
-          'cr: first-look moved-base case begins with a user-only coverage route', err + out)
-    (side / 'k-base.txt').write_text('unrelated incoming base change before first Accept look\n')
-    git('add', 'k-base.txt', cwd=side)
-    git('commit', '-q', '-m', 'move base before first Accept look', cwd=side)
-    k_tip = git('rev-parse', f'refs/heads/cr/{k}', cwd=side).strip()
-    k_seen_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', k, '--tip', k_tip, '--base', k_seen_base)
-    k_after_look = meta_of(k)
-    k_landed_tip = git('rev-parse', target, cwd=side).strip()
-    check(rc == 0 and items('a')[k]['status'] == 'closed' and k_after_look.get('user_seen_tip') == k_tip
-          and k_after_look.get('user_seen_base_tip') == k_seen_base and k_after_look.get('base_sha') == k_seen_base
-          and k_landed_tip == k_after_look.get('check_tip'),
-          'cr: first Accept on the exact current pair rebases, checks and lands in one call', err + out + str(k_after_look))
-
-    g = create('a', 'request a delta review')
-    g1 = task(g, 'G item')
-    run('a', 'claim', g, role='agent')
-    worker_pass(g, g1, 'g.txt')
-    to_review(g)
-    review_pass(g)
-    prior = meta_of(g).get('review_tip')
-    rc, out, err, _ = run('a', 'cr', 'request-review', g, 'please recheck this delta', role='solo')
-    after_request = meta_of(g)
-    check(rc == 0 and items('a')[g]['status'] == 'in_review' and after_request.get('review_tip') == prior
-          and 'requested agent review' in out, 'cr: Review requests agent delta review without erasing prior coverage', err + out)
-    rc, out, err = review_pass(g)
-    g_tip = git('rev-parse', 'HEAD', cwd=wt(g)).strip()
-    g_base = git('rev-parse', target, cwd=side).strip()
-    rc_land, land_out, land_err, _ = run('a', 'cr', 'land', g, '--tip', g_tip, '--base', g_base)
-    check(rc == 0 and rc_land == 0 and items('a')[g]['status'] == 'closed' and meta_of(g).get('review_tip') == prior,
-          'cr: re-review passes and lands the unchanged already-covered series', err + out + land_err + land_out)
-
-
-    design_cr = create('a', 'design with independent dependent')
-    design = create('a', 'independent design', '--parent', design_cr, kind='design')
-    dependent = create('a', 'waits for design text')
-    dependent_item = task(dependent, 'consumer item')
-    rc, _, err, _ = run('a', 'wait', dependent_item, '--on', design, '--for', 'read accepted design')
-    check(rc == 0 and any(edge['depends_on_id'] == design for edge in items('a')[dependent_item].get('dependencies') or []),
-          'cr: an item may wait on an item of another request', err)
-    rc, _, err, _ = run('a', 'unlink', dependent_item, design)
-    check(rc == 0, 'cr: the item wait is unlinked again', err)
-    rc, _, err, _ = run('a', 'wait', dependent, '--on', design, '--for', 'read accepted design')
-    check(rc == 0, 'cr: declare a design wait on its dependent request', err)
-    rc, _, err, _ = run('a', 'claim', dependent, role='agent')
-    check(rc == 1 and not wt(dependent).exists(), 'cr: an open design still holds its dependent request', err)
-    rc, _, err, _ = run('a', 'claim', design_cr, role='agent')
-    check(rc == 0, 'cr: the design-only CR is claimed like any CR', err)
-    worker_pass(design_cr, design, 'design-doc.txt')
-    rc, _, err, _ = run('a', 'claim', dependent, role='agent')
-    check(rc == 1 and design_cr in err and not wt(dependent).exists(), 'cr: the closed design item does not release its dependent before the CR lands', err)
-    to_review(design_cr)
-    rc, _, err, _ = run('a', 'claim', dependent, role='agent')
-    check(rc == 1 and design_cr in err and not wt(dependent).exists(), 'cr: the dependent waits while the design-only CR is in review', err)
-    rc, out, err = review_pass(design_cr)
-    check(rc == 0 and items('a')[design_cr]['status'] == 'passed' and not [r for r in items('a').values() if r['status'] == 'needs_ratification'
-                                                                                       and any(e.get('depends_on_id') == design_cr for e in r.get('dependencies') or [])],
-          'cr: a look-before design-only CR waits for the user\'s Accept after the reviewer pass', err + out)
-    rc, _, err, _ = run('a', 'claim', dependent, role='agent')
-    check(rc == 0 and meta_of(dependent).get('base') == design_cr, 'cr: a design-only CR at Accept is an ordinary stack base: the dependent stacks on it', err)
-    design_tip = git('rev-parse', f'refs/heads/cr/{design_cr}', cwd=side).strip()
-    design_base = git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', design_cr, '--tip', design_tip, '--base', design_base)
-    check(rc == 0 and items('a')[design_cr]['status'] == 'closed' and items('a')[design]['status'] == 'closed'
-          and git('rev-parse', target, cwd=side).strip() == design_tip, 'cr: the design-only CR lands the doc commit on Accept', err + out)
-    rc, _, err, _ = run('a', 'claim', dependent, role='agent')
-    check(rc == 0 and meta_of(dependent).get('base') == target, 'cr: after the design lands the dependent starts on the target', err)
-
-    first = create('a', 'first standalone item', kind='task')
-    second = create('a', 'second standalone item', kind='task')
-    rc, _, err, _ = run('a', 'wait', second, '--on', first, '--for', 'do the first item before the second')
-    check(rc == 0, 'cr: standalone items can already have a blocking edge', err)
-    plan = ROOT / 'group-linked-items.json'
-    plan.write_text(json.dumps({
-        'nodes': [{'key': 'request', 'title': 'group linked items', 'type': 'change-request', 'description': 'x'}],
-        'edges': [{'from_id': item, 'to_key': 'request', 'type': 'parent-child'} for item in (first, second)],
-    }))
-    rc, out, err, _ = run('a', 'create', '--graph', str(plan))
-    check(rc != 0 and 'agents board move' in err and not any(i.get('title') == 'group linked items' for i in items('a').values()),
-          'cr: a graph gives no existing item a parent, naming move (nixes-j65oa)', err + out)
-    request = create('a', 'group linked items')
-    rc, out, err, _ = run('a', 'move', first, second, '--to', request)
-    graph_rows = items('a')
-    check(rc == 0 and all(
-        any(dep['type'] == 'parent-child' and dep['depends_on_id'] == request for dep in graph_rows[item]['dependencies'])
-        and not (graph_rows[item].get('metadata') or {}).get('no_commit') for item in (first, second)) and any(
-        dep['type'] == 'blocks' and dep['depends_on_id'] == first for dep in graph_rows[second]['dependencies']),
-        'cr: move groups linked items into a change request, keeping their newly internal wait', err + out)
-
-    awaiting = create('a', 'request waiting on a question')
-    affected = task(awaiting, 'item affected by the answer')
-    rc, out, err, _ = run('a', 'console')
-    before = json.loads(out)['waitingOnYou'] if rc == 0 else None
-    rc, out, err, _ = run('a', 'create', 'question about one item', '-t', 'decision', '--description', 'x', '--holds', affected)
-    question = out.strip().splitlines()[-1] if rc == 0 else None
-    held = items('a')[affected]
-    check(rc == 0 and any(dep['type'] == 'blocks' and dep['depends_on_id'] == question for dep in held.get('dependencies', [])),
-          'cr: a question can hold an affected item', err + out)
-    rc, out, err, _ = run('a', 'console')
-    check(rc == 0 and before is not None and json.loads(out)['waitingOnYou'] == before + 1,
-          'cr: an item-scoped question adds its request to waits on your answers', err + out)
-    rc, _, err, _ = run('a', 'claim', awaiting, role='agent')
-    check(rc == 1 and not wt(awaiting).exists(), 'cr: a pending item question blocks claiming the request', err)
-
-
-def t_scenarios() -> None:
-    """The scenarios of docs/board/model.md (Scenarios the tests cover) that board code owns, through the real verbs, by that list's numbers.
-    1, 5 and 10 are t_cr's (a look-after pass lands; a CR stacked on one in review; hand-over refuses open items), 5 also the fake suite's
-    landing of a look-after child; 8 is the fake suite's gone-holder takeover. Here: 2, 3, 4, 6, 7, 9 and 11, and milestones (no scenario)."""
-    settle('a', 'b')
-    side = ROOT / 'a'
-    target = git('symbolic-ref', '--short', 'HEAD', cwd=side).strip()
-
-    def wt(cr: str) -> Path:
-        return side / '.worktrees' / cr
-
-    def task(cr: str, title: str) -> str:
-        return bd('a', 'create', title, '-t', 'task', '--description', 'x', '--silent', '--parent', cr)[1].strip().splitlines()[-1]
-
-    def row(item: str) -> dict:
-        return items('a')[item]
-
-    def open_items(cr: str) -> list[str]:
-        return [one['id'] for one in items('a').values() if one['status'] != 'closed'
-                and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == cr for dep in one.get('dependencies') or [])]
-
-    def work(cr: str, item: str, name: str) -> None:
-        (wt(cr) / name).write_text(name + '\n')
-        git('add', name, cwd=wt(cr))
-        git('commit', '-q', '-m', f'{item}: {name}', cwd=wt(cr))
-        rc, _, err, _ = run('a', 'close', item, '--reason', f'{item}: {name} written in a commit', role='agent')
-        check(rc == 0, f'{cr}: {item} closes', err)
-
-    def to_passed(cr: str) -> None:
-        check(run('a', 'handover', cr, 'tests: exit 0', role='agent')[0] == 0, f'{cr}: handed over')
-        check(run('a', 'claim', cr, role='solo')[0] == 0, f'{cr}: another session reviews it')
-        rc, _, err, _ = run('a', 'handover', cr, 'reviewed: fine', role='solo')
-        check(rc == 0 and row(cr)['status'] == 'passed', f'{cr}: the review passes it to Accept', err)
-
-    # 2. Look before; the user returns it with two findings: two items, fixed and closed, re-reviewed, Accepted, landed.
-    two = create('a', 'scenario 2: look before, two findings')
-    first = task(two, 'the change')
-    check(run('a', 'claim', two, role='agent')[0] == 0, 'scenario 2: claimed')
-    work(two, first, 's2.txt')
-    to_passed(two)
-    rc, out, err, _ = run('a', 'return', two, 'first finding of the Accept', 'second finding of the Accept', role='lead')
-    check(rc == 0 and row(two)['status'] == 'open' and len(open_items(two)) == 2, 'scenario 2: a Return makes one open item per finding', err + out)
-    check(run('a', 'claim', two, role='agent')[0] == 0, 'scenario 2: the worker claims it again')
-    for finding in open_items(two):
-        work(two, finding, f's2-{finding}.txt')
-    to_passed(two)
-    tip, base = git('rev-parse', f'refs/heads/cr/{two}', cwd=side).strip(), git('rev-parse', target, cwd=side).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', two, '--tip', tip, '--base', base, role='lead')
-    check(rc == 0 and row(two)['status'] == 'closed' and (row(two).get('metadata') or {}).get('outcome') == 'landed'
-          and git('rev-parse', target, cwd=side).strip() == tip, 'scenario 2: the Accept lands it, closed as landed', err + out)
-
-    # 3. Item B waits on a question while A is ready: A is done, hand-over refuses on B, the worker hands the CR back, and it is ready again
-    # once the ruling is planned (closed): in force still holds the waiter.
-    draft = ROOT / 'scenario-record.md'
-    draft.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
-    question = create('a', 'scenario 3: which way', '-t', 'decision', kind='decision')
-    three = create('a', 'scenario 3: item waits on a question')
-    a_item, b_item = task(three, 'A, ready'), task(three, 'B, waits on the question')
-    check(run('a', 'wait', b_item, '--on', question, '--for', 'the way it goes')[0] == 0, 'scenario 3: B waits on the question')
-    check(run('a', 'claim', three, role='agent')[0] == 0, 'scenario 3: the CR is ready through A')
-    work(three, a_item, 's3.txt')
-    rc, _, err, _ = run('a', 'handover', three, 'A is done', role='agent')
-    check(rc == 1 and b_item in err and row(three)['status'] == 'open', 'scenario 3: hand-over refuses while B is open, naming it', err)
-    rc, _, err, _ = run('a', 'unclaim', three, '--resume', 'B waits for the ruling', role='agent')
-    check(rc == 0 and not row(three).get('assignee'), 'scenario 3: the worker hands the CR back', err)
-    rc, _, err, _ = run('a', 'claim', three, role='agent')
-    check(rc == 1 and not row(three).get('assignee'), 'scenario 3: with only B open the CR is not ready', err)
-    check(run('a', 'claim', question)[0] == 0 and run('a', 'ruling', 'record', question, str(draft))[0] == 0
-          and run('a', 'ruling', 'release', question)[0] == 0 and row(question)['status'] == 'in_force', 'scenario 3: the ruling is in force')
-    rc, _, err, _ = run('a', 'claim', three, role='agent')
-    check(rc == 1 and not row(three).get('assignee'), 'scenario 3: a ruling in force does not release the waiter', err)
-    check(run('a', 'close', question, '--reason', 'planned: the way it goes is carried into B', role='solo')[0] == 0
-          and (row(question).get('metadata') or {}).get('outcome') == 'planned', 'scenario 3: planning closes the ruling as planned')
-    rc, _, err, _ = run('a', 'claim', three, role='agent')
-    check(rc == 0 and row(three).get('assignee'), 'scenario 3: ready again once the ruling is planned', err)
-
-    # 4. A no-commit probe is a task; the question waits on it; a CR whose only item waits on the question is not ready; the probe runs on its own.
-    probe = create('a', 'scenario 4: probe', '--no-commit', kind='task')
-    stalled_q = create('a', 'scenario 4: question', '-t', 'decision', kind='decision')
-    four = create('a', 'scenario 4: only item waits on the question')
-    four_item = task(four, 'the waiting item')
-    check(run('a', 'wait', stalled_q, '--on', probe, '--for', 'the probe result')[0] == 0
-          and run('a', 'wait', four_item, '--on', stalled_q, '--for', 'the answer')[0] == 0, 'scenario 4: question waits on the probe, the item on the question')
-    rc, _, err, _ = run('a', 'claim', four, role='agent')
-    check(rc == 1 and not row(four).get('assignee'), 'scenario 4: the CR with only the waiting item is not ready', err)
-    rc, _, err, _ = run('a', 'claim', stalled_q)
-    check(rc == 1 and probe in err and not row(stalled_q).get('assignee'), 'scenario 4: the question is not claimable while it waits on the probe, naming it', err)
-    check(run('a', 'claim', probe, role='agent')[0] == 0 and row(probe).get('assignee'), 'scenario 4: the probe runs on its own')
-    check(run('a', 'close', probe, '--reason', 'the probe found what it was after', role='agent')[0] == 0, 'scenario 4: the probe closes')
-    rc, _, err, _ = run('a', 'claim', four, role='agent')
-    check(rc == 1 and not row(four).get('assignee'), 'scenario 4: its CR still waits for the ruling', err)
-    rc, _, err, _ = run('a', 'claim', stalled_q)
-    check(rc == 0 and row(stalled_q).get('assignee'), 'scenario 4: the question is ready once the probe closed', err)
-
-    # An item follows its change request's hold: only the holder's session, the user or (once the holder is gone) a deciding session write it.
-    held = create('a', 'items follow the hold')
-    mine, other_cr = task(held, 'an item of the held request'), create('a', 'another request')
-    check(run('a', 'claim', held, role='agent')[0] == 0, 'item writes: the agent holds the request')
-    for what, args in (('close', ('close', mine, '--reason', 'closed by a session that does not hold its request')),
-                       ('update', ('update', mine, '--title', 'renamed by a stranger')),
-                       ('move', ('move', mine, '--to', other_cr))):
-        rc, _, err, _ = run('a', *args, role='solo')
-        check(rc != 0 and held in err and row(mine)['status'] == 'open' and row(mine)['title'] == 'an item of the held request',
-              f'item writes: a session that does not hold the request cannot {what} its item', err)
-    # A wait is written by the user or a deciding session whoever holds the request; a session that does not hold it, or any unheld request, refuses it.
-    solo_cr, solo_item = create('a', 'held by solo'), None
-    solo_item = task(solo_cr, 'an item of the request solo holds')
-    check(run('a', 'claim', solo_cr, role='solo')[0] == 0, 'item waits: solo holds a request')
-    rc, _, err, _ = run('a', 'wait', solo_item, '--on', other_cr, '--for', 'another session waits it', role='agent')
-    check(rc != 0 and solo_cr in err and not any(dep.get('type') == 'blocks' for dep in row(solo_item).get('dependencies') or []), 'item waits: a session that does not hold the request cannot wait its item', err)
-    unheld_cr = create('a', 'nobody holds this')
-    unheld_item = task(unheld_cr, 'an item of an unheld request')
-    rc, _, err, _ = run('a', 'wait', unheld_item, '--on', other_cr, '--for', 'a planner waits it', role='agent')
-    check(rc == 0 and any(dep.get('type') == 'blocks' and dep.get('depends_on_id') == other_cr for dep in row(unheld_item).get('dependencies') or []),
-          'item waits: a planner (a session pulling plan) waits an item of an unheld request', err)
-    check(run('a', 'unlink', unheld_item, other_cr, role='agent')[0] == 0 and not any(dep.get('type') == 'blocks' for dep in row(unheld_item).get('dependencies') or []),
-          'item writes: a planner unlinks the wait of an item of an unheld request')
-    movable = task(unheld_cr, 'a planner moves this item')
-    rc, _, err, _ = run('a', 'move', movable, '--to', other_cr, role='agent')
-    check(rc == 0 and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == other_cr for dep in row(movable).get('dependencies') or []),
-          'item writes: a planner moves an item of an unheld request', err)
-    rc, _, err, _ = run('a', 'move', solo_item, '--to', other_cr, role='agent')
-    check(rc != 0 and solo_cr in err and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == solo_cr for dep in row(solo_item).get('dependencies') or []),
-          'item writes: a planner cannot move an item of a held request; it comments the change', err)
-    check(run('a', 'wait', mine, '--on', other_cr, '--for', 'a deciding session waits it', role='solo')[0] == 0
-          and run('a', 'wait', unheld_item, '--on', other_cr, '--for', 'a deciding session waits it', role='autopilot')[0] == 0,
-          'item waits: a deciding session writes a wait whoever holds the request')
-    check(run('a', 'update', mine, '--title', 'renamed by the holder', role='agent')[0] == 0 and row(mine)['title'] == 'renamed by the holder',
-          'item writes: the holder writes it')
-    check(run('a', 'update', mine, '--title', 'renamed by the user', role=None)[0] == 0 and row(mine)['title'] == 'renamed by the user',
-          'item writes: the user writes it')
-
-    # Deciding sessions are lead, solo and autopilot: the away path's supersede and close of settled questions pass for autopilot. The holder of an
-    # in-force ruling that claimed it with the plan pull closes it as planned; a session that does not hold it does not.
-    def outcome(item: str) -> str | None:
-        return (row(item).get('metadata') or {}).get('outcome')
-
-    def in_force(title: str) -> str:
-        ruling = create('a', title, '-t', 'decision', kind='decision')
-        check(run('a', 'claim', ruling)[0] == 0 and run('a', 'ruling', 'record', ruling, str(draft))[0] == 0
-              and run('a', 'ruling', 'release', ruling)[0] == 0 and row(ruling)['status'] == 'in_force', f'{title}: in force')
-        return ruling
-    planned = in_force('planner closes: the ruling')
-    rc, _, err, _ = run('a', 'close', planned, '--reason', 'planned in the change requests it made', role='agent')
-    check(rc != 0 and row(planned)['status'] == 'in_force', 'planner close: a session that does not hold the ruling cannot close it', err)
-    check(run('a', 'claim', planned, role='agent')[0] == 0, 'planner close: the plan pull claims the ruling')
-    rc, _, err, _ = run('a', 'close', planned, '--reason', 'planned in the change requests it made', role='agent')
-    check(rc == 0 and row(planned)['status'] == 'closed' and outcome(planned) == 'planned', 'planner close: its holder closes it as planned', err)
-    old, new = in_force('away: the ruling replaced'), create('a', 'away: the replacing ruling', '-t', 'decision', kind='decision')
-    away_draft = ROOT / 'away-record.md'
-    away_draft.write_text(draft.read_text() + '## Reversal\nrevert\n')
-    check(run('a', 'claim', new, role='autopilot')[0] == 0, 'away: autopilot claims the question')
-    rc, _, err, _ = run('a', 'ruling', 'record', new, str(away_draft), '--unratified', '--replaces', old, role='autopilot')
-    check(rc == 0 and row(new)['status'] == 'in_force' and row(old)['status'] == 'closed' and outcome(old) == 'superseded',
-          'away: autopilot records an unratified ruling, which supersedes the old one', err)
-    settled = create('a', 'away: a question settled in the chat', '-t', 'decision', kind='decision')
-    rc, _, err, _ = run('a', 'close', settled, '--reason', 'settled by the chat answer, recorded elsewhere', role='autopilot')
-    check(rc == 0 and row(settled)['status'] == 'closed' and outcome(settled) == 'dropped', 'away: autopilot closes a settled question', err)
-    # A question another ruling answers closes superseded.
-    answered, answering = create('a', 'answered question', '-t', 'decision', kind='decision'), create('a', 'answering ruling', '-t', 'decision', kind='decision')
-    check(run('a', 'claim', answering)[0] == 0 and run('a', 'ruling', 'record', answering, str(draft))[0] == 0, 'answered: the ruling is recorded')
-    rc, _, err, _ = run('a', 'ruling', 'release', answering, '--closes', f'{answered}={answering}')
-    check(rc == 0 and row(answered)['status'] == 'closed' and outcome(answered) == 'superseded', 'answered: the question closes as superseded', err)
-
-    # 6. Someday and "remind me on a day" are deferred, not started by themselves; a question put off is deferred too; the user's
-    # deferral is undone only by the user (through a lead or solo session).
-    someday = create('a', 'scenario 6: someday dark mode', '--no-commit', kind='task')
-    remind = create('a', 'scenario 6: remind me', '--no-commit', kind='task')
-    parked = create('a', 'scenario 6: a question put off', '-t', 'decision', kind='decision')
-    check(run('a', 'defer', someday, '--reason', 'someday: nobody needs dark mode yet')[0] == 0
-          and run('a', 'defer', remind, '--reason', 'remind me', '--until', '2020-01-06')[0] == 0
-          and run('a', 'defer', parked, '--reason', 'put off without a date')[0] == 0, 'scenario 6: set aside')
-    run('a', 'queue')  # a read: nothing reopens by itself
-    check(all(row(one)['status'] == 'deferred' for one in (someday, remind, parked))
-          and (row(remind).get('metadata') or {}).get('revisit') == '2020-01-06' and not (row(someday).get('metadata') or {}).get('revisit'),
-          'scenario 6: they stay deferred after a read, the date only a revisit day')
-    rc, _, err, _ = run('a', 'claim', someday, role='agent')
-    check(rc == 1 and not row(someday).get('assignee'), 'scenario 6: a deferred task is not claimable', err)
-    rc, _, err, _ = run('a', 'undefer', someday, role='agent')
-    check(rc != 0 and row(someday)['status'] == 'deferred', "scenario 6: an agent session does not undo the user's deferral", err)
-    check(run('a', 'undefer', someday, remind, parked)[0] == 0 and all(row(one)['status'] == 'open' for one in (someday, remind, parked)),
-          'scenario 6: a deciding session undefers for the user')
-
-    # 7. A step only the user takes is a human gate: the CR waits on it; resolving the gate frees the CR.
-    ten = create('a', 'scenario 7: deploy waits for the key rotation')
-    task(ten, 'deploy')
-    rc, out, err, _ = run('a', 'gate', 'create', '--blocks', ten, '--reason', 'rotate the API key before deploy')
-    gate = next((one['id'] for one in items('a').values() if one.get('issue_type') == 'gate' and one['status'] != 'closed'), None)
-    check(rc == 0 and gate, 'scenario 7: the gate is filed', err + out)
-    rc, _, err, _ = run('a', 'claim', ten, role='agent')
-    check(rc == 1 and not row(ten).get('assignee'), 'scenario 7: the CR waits on the gate', err)
-    rc, _, err, _ = run('a', 'gate', 'resolve', gate, role='agent')
-    check(rc != 0 and row(gate)['status'] != 'closed', 'scenario 7: a worker does not resolve the user\'s step', err)
-    check(run('a', 'gate', 'resolve', gate, '--reason', 'the key is rotated')[0] == 0 and run('a', 'claim', ten, role='agent')[0] == 0,
-          'scenario 7: resolving the gate frees the CR')
-
-    # 7b. A forced close takes the record in its guard: two closers at once, exactly one wins, and the other is told it changed meanwhile.
-    raced = create('a', 'scenario 7b: two closers at once')
-    task(raced, 'the item')
-    run('a', 'gate', 'create', '--blocks', raced, '--reason', 'scenario 7b: a gate two sessions resolve at once')
-    race_gate = next((one['id'] for one in items('a').values() if one.get('issue_type') == 'gate' and one['status'] != 'closed'), None)
-    outcomes: dict[str, tuple[int, str]] = {}
-    closers = [threading.Thread(target=lambda role=role: outcomes.__setitem__(role, run('a', 'gate', 'resolve', race_gate, role=role)[:3:2])) for role in ('lead', 'solo')]
-    for thread in closers:
-        thread.start()
-    for thread in closers:
-        thread.join()
-    check(race_gate and sorted(code == 0 for code, _ in outcomes.values()) == [False, True] and row(race_gate)['status'] == 'closed',
-          'scenario 7b: exactly one of two forced closers wins', outcomes)
-    check(any('changed meanwhile' in err or 'does not apply' in err for code, err in outcomes.values() if code), 'scenario 7b: the other is refused', outcomes)
-    # Whichever reads second, the guard is what bd's compare-and-set gives: taking an unheld record twice, the second take exits 13 and writes nothing
-    # (the board turns that exit into "changed meanwhile": test-agent-configs); a loser that read after the winner closed is refused by the table.
-    guarded = create('a', 'scenario 7b: the guard itself', '--no-commit', kind='task')
-    first = raw('a', 'update', guarded, '--assignee', 'closer-one', '--if-assignee', '', '--if-status', 'open', '--json')
-    second = raw('a', 'update', guarded, '--assignee', 'closer-two', '--if-assignee', '', '--if-status', 'open', '--json')
-    check(first[0] == 0 and second[0] == 13 and row(guarded).get('assignee') == 'closer-one', 'scenario 7b: a second take of an unheld record is refused by the guard, exit 13', (first[0], second[0], second[2]))
-
-    # Milestones (no model scenario). A milestone waits on nothing: its change requests are part of it, and it is accepted once their work is done.
-    milestone = create('a', 'scenario milestone: the milestone', kind='milestone')
-    member = create('a', 'scenario milestone: a member')
-    member_item = task(member, 'the member\'s work')
-    check(run('a', 'move', member, '--to', milestone)[0] == 0, 'scenario milestone: a change request joins a milestone')
-    rc, _, err, _ = run('a', 'wait', milestone, '--on', member, '--for', 'its members')
-    check(rc != 0 and 'waits on nothing' in err, 'scenario milestone: a milestone does not wait', err)
-    rc, _, err, _ = run('a', 'claim', milestone)
-    check(rc != 0 and not row(milestone).get('assignee') and member_item in err, 'scenario milestone: the milestone is not ready while its work is open, naming it', err)
-    check(run('a', 'close', member_item, '--reason', 'scenario milestone: the work is moot', '--outcome', 'dropped')[0] == 0
-          and run('a', 'cr', 'reject', member, 'scenario milestone: the member is dropped')[0] == 0, 'scenario milestone: the member is done')
-    check(run('a', 'claim', milestone)[0] == 0 and run('a', 'close', milestone, '--reason', 'the user accepted the milestone')[0] == 0
-          and row(milestone)['status'] == 'closed' and (row(milestone).get('metadata') or {}).get('outcome') == 'accepted',
-          'scenario milestone: ready once its work is done, and accepted')
-    rc, _, err, _ = bd('a', 'create', 'a timer gate', '-t', 'gate', '--description', 'x', '--silent')
-    check(rc != 0 and 'agents board gate create' in err, 'a gate is made by the human gate verb only', err)
-
-    # Milestones b. A close takes the record by holder compare-and-set, so bd's own actor check passes without --force: the user closes a task a session holds,
-    # and a session closes its worker's task.
-    held_task = create('a', 'scenario milestone b: closed by the user', '--no-commit', kind='task')
-    check(run('a', 'claim', held_task, role='agent')[0] == 0 and row(held_task).get('assignee'), 'scenario milestone b: a session holds the task')
-    rc, _, err, _ = run('a', 'close', held_task, '--reason', 'scenario milestone b: the user closes a held task', role=None)
-    check(rc == 0 and row(held_task)['status'] == 'closed' and (row(held_task).get('metadata') or {}).get('outcome') == 'done', 'scenario milestone b: the user closes a task a session holds', err)
-    worker_task = create('a', 'scenario milestone b: closed by the session of its worker', '--no-commit', kind='task')
-    worker_actor = f"{session('a', 'agent')[-8:]}/worker01"
-    claimed = subprocess.run([sys.executable, '-B', BOARD, 'claim', worker_task], cwd=ROOT / 'a', capture_output=True, text=True, input='',
-                             env={**base_env('a'), 'BEADS_ACTOR': worker_actor, 'CLAUDE_CODE_SESSION_ID': session('a', 'agent')})
-    check(claimed.returncode == 0 and row(worker_task).get('assignee') == worker_actor, "scenario milestone b: a worker holds the task under its session's actor", claimed.stderr)
-    rc, _, err, _ = run('a', 'close', worker_task, '--reason', 'scenario milestone b: the session closes its worker task', role='agent')
-    check(rc == 0 and row(worker_task)['status'] == 'closed', "scenario milestone b: a session closes its worker's task", err)
-
-    # 9. Two sessions claim at once: the compare-and-set lets exactly one win.
-    race = create('a', 'scenario 9: two claims at once')
-    task(race, 'the item')
-    results: dict[str, int] = {}
-    threads = [threading.Thread(target=lambda role=role: results.__setitem__(role, run('a', 'claim', race, role=role)[0])) for role in ('agent', 'solo')]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    holder = row(race).get('assignee')
-    check(sorted(results.values()) == [0, 1] and holder and holder.startswith(session('a', next(role for role, code in results.items() if code == 0))[-8:]),
-          'scenario 9: exactly one claim wins, and holds', (results, holder))
-    check(wt(race).is_dir() and git('branch', '--list', f'cr/{race}', cwd=side).strip(), 'scenario 9: the winner\'s worktree and branch survive the loser\'s claim')
-
-    # 11. A duplicate is a relates-to link to the original and a close as dropped naming it; the original stays open and the link stays.
-    original = create('a', 'scenario 11: the original', '--no-commit', kind='task')
-    duplicate = create('a', 'scenario 11: its duplicate', '--no-commit', kind='task')
-    check(run('a', 'link', duplicate, original, '--type', 'relates-to')[0] == 0, 'scenario 11: the duplicate links to the original')
-    rc, _, err, _ = run('a', 'close', duplicate, '--reason', f'duplicate of {original}: same work', '--outcome', 'dropped', role='agent')
-    check(rc == 0 and row(duplicate)['status'] == 'closed' and (row(duplicate).get('metadata') or {}).get('outcome') == 'dropped'
-          and row(original)['status'] == 'open' and any(dep['depends_on_id'] == original and dep['type'] == 'relates-to' for dep in row(duplicate).get('dependencies') or []),
-          'scenario 11: the duplicate closes as dropped, the original stays open, the link stays', err)
-
-
-def t_record() -> None:
-    """nixes-ymay1 on a real board: `ruling record --unratified --waits-on --answers` writes an away ruling, its premise wait and the close of the
-    question it answers in one call and releases its hold last. N1: no planner can plan the ruling before its premise wait stands. N2: the
-    question waiting on an in-force premise closes superseded, what waited on it waits on the ruling, and a stop leaves the ruling held and the
-    call rerunnable."""
-    settle('a', 'b')
-    draft = ROOT / 'record-premise.md'
-    draft.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
-    away = ROOT / 'record-away.md'
-    away.write_text(draft.read_text() + '## Reversal\nRevise the ruling; reopen the question it answered.\n')
-
-    def row(item: str) -> dict:
-        return items('a')[item]
-
-    def waits_on(item: str) -> set[str]:
-        return {d['depends_on_id'] for d in row(item).get('dependencies') or [] if d.get('type') == 'blocks'}
-
-    premise = create('a', 'record: the premise', '-t', 'decision', kind='decision')
-    check(run('a', 'claim', premise)[0] == 0 and run('a', 'ruling', 'record', premise, str(draft))[0] == 0
-          and run('a', 'ruling', 'release', premise)[0] == 0 and row(premise)['status'] == 'in_force', 'record: the premise is in force')
-
-    def world(tag: str) -> tuple[str, str, str]:
-        """An open question waiting on the in-force premise, a task waiting on the question, and the new ruling the autopilot holds."""
-        question = create('a', f'record {tag}: the question', '-t', 'decision', kind='decision')
-        task = create('a', f'record {tag}: the work', '--no-commit', kind='task')
-        ruling = create('a', f'record {tag}: the ruling', '-t', 'decision', kind='decision')
-        check(run('a', 'wait', question, '--on', premise)[0] == 0 and run('a', 'wait', task, '--on', question, '--for', 'the rule')[0] == 0
-              and run('a', 'claim', ruling, role='autopilot')[0] == 0, f'record {tag}: question, work and held ruling set up')
-        return question, task, ruling
-
-    question, task, ruling = world('one')
-    rc, out, err, _ = run('a', 'ruling', 'record', ruling, str(away), '--unratified', '--waits-on', premise, '--answers', question, role='autopilot')
-    got = row(ruling)
-    check(rc == 0 and got['status'] == 'in_force' and not got.get('assignee') and waits_on(ruling) == {premise},
-          'N1: one call records the ruling in force, waiting on its premise, and releases the hold last', err + out)
-    check(row(question)['status'] == 'closed' and (row(question).get('metadata') or {}).get('outcome') == 'superseded',
-          'N2: the question waiting on an in-force premise closes superseded', row(question))
-    check(ruling in waits_on(task), 'N2: what waited on the question waits on the ruling', row(task).get('dependencies'))
-    rc, _, err, _ = run('a', 'claim', ruling, role='lead')  # a second planner, right after the call
-    check(rc != 0 and row(ruling)['status'] == 'in_force' and not row(ruling).get('assignee'),
-          'N1: a second planner cannot plan the ruling while its premise is in force', err)
-
-    # A stop inside the call (bd refuses the answered question's close once): the ruling stays held, the rerun finishes.
-    question, task, ruling = world('two')
-    shim = ROOT / 'shim'
-    shim.mkdir(exist_ok=True)
-    marker = ROOT / 'shim-stopped'
-    (shim / 'bd').write_text(f"""#!{sys.executable}
-import os, shutil, sys
-here = {str(shim)!r}
-real = shutil.which('bd', path=os.pathsep.join(p for p in os.environ['PATH'].split(os.pathsep) if os.path.realpath(p) != os.path.realpath(here)))
-if 'close' in sys.argv[1:] and {question!r} in sys.argv and not os.path.exists({str(marker)!r}):
-    open({str(marker)!r}, 'w').close()
-    print('injected stop', file=sys.stderr)
-    sys.exit(1)
-os.execv(real, [real, *sys.argv[1:]])
-""")
-    (shim / 'bd').chmod(0o755)
-    env = {**base_env('a'), 'CLAUDE_CODE_SESSION_ID': session('a', 'autopilot'), 'PATH': f"{shim}{os.pathsep}{os.environ['PATH']}"}
-    argv = ['ruling', 'record', ruling, str(away), '--unratified', '--waits-on', premise, '--answers', question]
-    stopped = subprocess.run([sys.executable, '-B', BOARD, *argv], cwd=ROOT / 'a', capture_output=True, text=True, env=env, input='', timeout=200)
-    got = row(ruling)
-    check(stopped.returncode != 0 and marker.exists() and got['status'] == 'in_force' and got.get('assignee') and waits_on(ruling) == {premise}
-          and row(question)['status'] != 'closed', 'N2: a stop leaves the ruling in force, waiting on its premise and still held', stopped.stderr + stopped.stdout)
-    check(run('a', 'claim', ruling, role='autopilot')[0] == 0, "N2: the rerun's claim keeps its own hold")
-    rc, out, err, _ = run('a', *argv, role='autopilot')
-    check(rc == 0 and row(question)['status'] == 'closed' and not row(ruling).get('assignee') and ruling in waits_on(task),
-          'N2: the rerun closes the question and releases the ruling', err + out)
+    rc, out, err, _ = run('a', 'claim', cr, role='agent')
+    check(rc == 0 and (worktree / cr).is_dir() and git('branch', '--list', f'cr/{cr}', cwd=side).strip()
+          and meta_of(cr).get('base') == target and meta_of(cr).get('base_sha') == main_tip,
+          'cr: a claim creates the worktree and branch and records the base', err + out + str(meta_of(cr)))
+    (worktree / cr / 'a.txt').write_text('a\n')
+    git('add', 'a.txt', cwd=worktree / cr)
+    git('commit', '-q', '-m', f'{item}: a.txt', cwd=worktree / cr)
+    sha = git('rev-parse', '--short', 'HEAD', cwd=worktree / cr).strip()
+    rc, out, err, _ = run('a', 'close', item, '--reason', f'{sha}: a.txt written in the pass commit', role='agent')
+    check(rc == 0, 'cr: the item closes with its pass commit', err + out)
+    tip = git('rev-parse', 'HEAD', cwd=worktree / cr).strip()
+    rc, out, err, _ = run('a', 'handover', cr, 'tests: exit 0', role='agent')
+    check(rc == 0 and items('a')[cr]['status'] == 'in_review' and meta_of(cr).get('check_result') == 'pass' and meta_of(cr).get('check_tip') == tip,
+          'cr: hand-over runs the checks and stores the pair', err + out + str(meta_of(cr)))
+    rc, out, err, _ = run('a', 'claim', cr, role='solo')
+    check(rc == 0, 'cr: another session claims the review', err + out)
+    rc, out, err, _ = run('a', 'handover', cr, 'reviewed: fine', role='solo')
+    check(rc == 0 and items('a')[cr]['status'] == 'passed', 'cr: the review passes it to the Accept (look before)', err + out)
+    rc, out, err, _ = run('a', 'cr', 'land', cr, '--tip', tip, '--base', main_tip)
+    check(rc == 0 and items('a')[cr]['status'] == 'closed' and git('rev-parse', target, cwd=side).strip() == tip
+          and not (worktree / cr).exists() and not git('branch', '--list', f'cr/{cr}', cwd=side).strip(),
+          'cr: the Accept lands it and removes its worktree and branch', err + out)
 
 
 def t_move() -> None:
@@ -2175,13 +948,13 @@ def t_move() -> None:
     rc, _, err, _ = run('a', 'relocate', fresh, role='agent')
     check(rc == 1 and 'only lead' in err, 'move: an agent is refused', err)
     rc, _, err, _ = run('a', 'relocate', f'git+file://{ROOT}/empty.git')
-    check(rc == 1 and 'empty' in err and 'not set' in bd('a', 'config', 'get', 'custom.board.moved')[1], 'move: an empty repository is refused before the note', err)
+    check(rc == 1 and 'empty' in err and 'not set' in run('a', 'bd', '--raw', '--yes', 'config', 'get', 'custom.board.moved')[1], 'move: an empty repository is refused before the note', err)
     before = commits('a')
     rc, out, err, _ = run('a', 'relocate', fresh)
     check(rc == 0 and commits('a') < before, 'move: flattened and pushed', err + out)
     check('refs/dolt/data' in git('for-each-ref', cwd=ROOT / 'remote.git') and 'refs/dolt/data' in git('for-each-ref', cwd=ROOT / 'fresh.git'),
           'move: the old data stays, the new repository holds the board')
-    check('not set' in bd('a', 'config', 'get', 'custom.board.moved')[1] and 'fresh.git' in remotes('a') and 'remote.git' not in remotes('a'),
+    check('not set' in run('a', 'bd', '--raw', '--yes', 'config', 'get', 'custom.board.moved')[1] and 'fresh.git' in remotes('a') and 'remote.git' not in remotes('a'),
           "move: the mover's board carries no note and syncs with the new repository", remotes('a'))
     rc, _, err, _ = run('a', 'health')
     check(rc == 0 and 'moved' not in err, 'move: the mover works on', err)
@@ -2189,7 +962,7 @@ def t_move() -> None:
     (ROOT / 'b/.beads/board-sync/pulled').touch()
     stale = create('b', 'written before b knows')
     check(wait_until(lambda: sync_state('b').get('moved') == fresh, options.seconds * 5), 'a stale clone learns of the move at its next sync', sync_state('b'))
-    rc, _, err, _ = bd('b', 'create', 'refused after the move', '-t', 'task', '--description', 'x')
+    rc, _, err, _ = run('b', 'create', 'refused after the move', '-t', 'task', '--description-file', '-', '--no-commit', stdin='x')
     check(rc != 0 and f'board join {fresh}' in err, 'a moved board refuses writes, naming the join', err)
     rc, _, err, _ = run('b', 'claim', role='agent')
     check(rc != 0 and 'board join' in err, 'a moved board refuses claims', err)
@@ -2203,7 +976,7 @@ def t_move() -> None:
     rows = items('b')
     check(item in rows and stale not in rows and not sync_state('b').get('moved'), 'rejoin: the new board, without the stale write')
     found = re.search(r'board bd --raw --yes import (\S+)', out)
-    rc, _, err, _ = bd('b', 'import', found.group(1) if found else 'missing')
+    rc, _, err, _ = run('b', 'bd', '--raw', '--yes', 'import', found.group(1) if found else 'missing')
     check(rc == 0 and stale in items('b'), 'bd import brings the stale write over', err)
     mine = create('b', 'after the move')
     settle('a', 'b')
@@ -2226,7 +999,7 @@ SETTINGS = {'create.require-description': 'true', 'validation.on-close': 'error'
 
 
 def setting(side: str, key: str) -> str:
-    return json.loads(bd(side, 'config', 'get', '--json', key, role=None)[1] or '{}').get('value', '')
+    return json.loads(raw(side, 'config', 'get', '--json', key)[1] or '{}').get('value', '')
 
 
 def t_setup() -> None:
@@ -2245,9 +1018,9 @@ def t_setup() -> None:
     check(not git('status', '--short', cwd=ROOT / 'setupproj').strip() and not (ROOT / 'setupproj/AGENTS.md').exists()
           and not git('config', '--get', 'core.hooksPath', cwd=ROOT / 'setupproj').strip(), 'setup: no project files, agent files or hooks',
           git('status', '--short', cwd=ROOT / 'setupproj'))
-    bd('setupproj', 'config', 'set', 'validation.on-close', 'warn', role=None)
-    bd('setupproj', 'config', 'unset', 'types.custom', role=None)
-    bd('setupproj', 'dolt', 'commit', '-m', 'drift', role=None)
+    raw('setupproj', 'config', 'set', 'validation.on-close', 'warn')
+    raw('setupproj', 'config', 'unset', 'types.custom')
+    raw('setupproj', 'dolt', 'commit', '-m', 'drift')
     rc, out, err, _ = run('setupproj', 'setup', role=None)
     check(rc == 0 and 'validation.on-close: warn -> error' in out and 'types.custom: (unset) -> change-request' in out,
           'setup on an existing board: sets the missing setting, resets the differing one, printing old and new', err + out)
@@ -2255,8 +1028,8 @@ def t_setup() -> None:
     check('already has a board' in out, 'setup: an existing board is never re-created', out)
     rc, out, err, _ = run('setupproj', 'setup', role=None)
     check(rc == 0 and ' -> ' not in out and 'up to date' in out, 'setup again: nothing to do', err + out)
-    bd('setupproj', 'config', 'unset', 'custom.board.model', role=None)
-    bd('setupproj', 'dolt', 'commit', '-m', 'an older board', role=None)
+    raw('setupproj', 'config', 'unset', 'custom.board.model')
+    raw('setupproj', 'dolt', 'commit', '-m', 'an older board')
     rc, out, err, _ = run('setupproj', 'setup', role=None)
     check(rc == 0 and setting('setupproj', 'custom.board.model') == '', 'setup on an existing board without the marker leaves it unset: only board-migrate writes it', err + out)
     rc, out, err, _ = run('setupproj', 'comment', 'nothing-here', '-m', 'a write on a board without the marker', role=None)
@@ -2274,18 +1047,18 @@ def t_setup() -> None:
     check(rc == 1 and 'not one of' in err and setting('setupproj', 'custom.board.look') == 'after', 'setup: an invalid setting is refused and changes nothing', err + out)
     rc, out, err, _ = run('setupproj', 'share', role=None)
     check(rc == 1 and 'board setup --server' in err, 'share on an embedded board: refused, naming the conversion', err + out)
-    made = [bd('setupproj', 'create', title, '--description', f'{title}, an item the conversion keeps', '--silent', role=None)[1].strip()
+    made = [run('setupproj', 'create', title, '--description-file', '-', '--no-commit', stdin=f'{title}, an item the conversion keeps', role=None)[1].strip()
             for title in ('first kept', 'second kept')]
     rc, out, err, _ = run('setupproj', 'setup', '--server', role=None)
     meta = json.loads((ROOT / 'setupproj/.beads/metadata.json').read_text()) if (ROOT / 'setupproj/.beads/metadata.json').is_file() else {}
     kept = sorted((ROOT / 'setupproj').glob('.beads.before-server-*'))
-    rc_list, listed, _, _ = bd('setupproj', 'list', '--all', '--json', role=None)
+    rc_list, listed, _, _ = run('setupproj', 'bd', 'list', '--all', '--json', role=None)
     present = {item['id'] for item in json.loads(listed or '[]')} if rc_list == 0 else set()
     check(rc == 0 and meta.get('dolt_mode') == 'server' and meta.get('dolt_database') == 'setupproj' and set(made) <= present and len(kept) == 1,
           'setup --server on an embedded board: converts it in place, every item kept, the old folder beside it', (err + out, meta, made, present, kept))
     check(setting('setupproj', 'dolt.auto-start') == 'false' and setting('setupproj', 'validation.on-close') == 'error',
           'setup --server: the converted board has the server settings and the rest', (setting('setupproj', 'dolt.auto-start'), err + out))
-    status = bd('setupproj', 'backup', 'status', role=None)[1]
+    status = raw('setupproj', 'backup', 'status')[1]
     check('Destination' not in status, "setup --server: the conversion's backup is not left registered", status)
     check(not git('status', '--short', cwd=ROOT / 'setupproj').strip(), 'setup --server: the kept folder stays out of git status',
           git('status', '--short', cwd=ROOT / 'setupproj'))
@@ -2296,181 +1069,37 @@ def t_setup() -> None:
     check(rc == 0 and meta.get('dolt_mode') == 'server' and meta.get('dolt_database') == 'srv' and setting('setupsrv', 'dolt.auto-start') == 'false',
           'setup: a new board is a server board that board starts itself', (err + out, meta))
     check(setting('setupsrv', 'dolt.auto-commit') != 'batch', 'setup: an unshared board keeps per-write commits', setting('setupsrv', 'dolt.auto-commit'))
-    rc, out, err, _ = run('a', 'setup', role=None)
-    check(rc == 0 and 'up to date' in out and ' -> ' not in out, 'setup on a shared board: share applied the same lists, the shared ones included', err + out)
 
 
-def t_migrate() -> None:
-    """board-migrate's conversion on a board holding every old form: refused writes and open reads before, a dry run that writes nothing,
-    the conversions, a rerun that finds nothing, `check` clean, and the marker last."""
-    side = 'migproj'
+MIGRATE_SCRIPT = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'convert-stored-forms.py'
+
+
+def old_form_board(side: str) -> dict[str, str]:
+    """A board holding every stored form of the earlier model: fixtures/migrate-old-forms.jsonl, a `bd export` of one built through the
+    earlier commands (the forms are history, so the export stays as it is), imported under the earlier status list, plus the worktree each
+    of its change requests had. Returns the record ids by name (mg-<name>)."""
     git('init', '-q', '-b', 'main', side)
     git('commit', '-q', '--allow-empty', '-m', 'init', cwd=ROOT / side)
-    rc, out, err, _ = run(side, 'setup', '--embedded', '--prefix', 'mg', '--target', 'main', '--setup', 'true', '--checks', 'true', '--look', 'before', '--view', 'code', role=None)
-    check(rc == 0, 'migrate: the board is set up', err + out)
+    rc, out, err, _ = run(side, 'setup', '--prefix', 'mg', '--target', 'main', '--setup', 'true', '--checks', 'true', '--look', 'before', '--view', 'code', role=None)
+    check(rc == 0, f'{side}: the board is set up', err + out)
     raw(side, 'config', 'set', 'status.custom', 'decided:wip,released:active,in_review:wip,needs_ratification:wip,needs_acceptance:wip,in_force:active,passed:wip')
     raw(side, 'config', 'set', 'types.custom', 'design,change-request')  # the earlier model registered the design type; `setup` below puts the current list back
-    raw(side, 'config', 'unset', 'custom.board.model')
-    ids: dict[str, str] = {}
-
-    def make(name: str, title: str, *flags: str, kind: str = 'task') -> None:
-        rc, out, err, _ = raw(side, 'create', title, '-t', kind, '-d', f'{title} text', '--silent', *flags)
-        if rc:
-            raise RuntimeError(f'create {title}: {err}{out}')
-        ids[name] = out.strip().splitlines()[-1]
-
-    def update(name: str, *flags: str) -> None:
-        rc, out, err, _ = raw(side, 'update', ids[name], *flags)
-        if rc:
-            raise RuntimeError(f'update {name}: {err}{out}')
-
-    def link(name: str, target: str, kind: str) -> None:
-        result = subprocess.run([sys.executable, '-B', BOARD, 'bd', '--raw', '--yes', 'batch', '-m', 'fixture', '--json'], cwd=ROOT / side, capture_output=True, text=True,
-                                env=base_env(side), input=f'dep add {ids[name]} {ids[target]} {kind}\n')
-        if result.returncode:
-            raise RuntimeError(f'link {name}: {result.stderr}{result.stdout}')
-
-    no_commit = ['--metadata', '{"no_commit":true}']
-    for name, title in (('cr1', 'CR one'), ('cr2', 'CR in review, claimed'), ('cr3', 'CR in review, unknown hand-over'), ('cr4', 'CR awaiting acceptance'), ('cr5', 'CR awaiting acceptance with its own look'), ('cr6', 'CR in progress')):
-        make(name, title, kind='change-request')
-    make('dsg_review', 'design item in review, held', '--parent', ids['cr1'], kind='design')
-    update('dsg_review', '--status', 'in_review', '--assignee', 'abcd1234')
-    make('def_item', 'deferred item of a live change request', '--parent', ids['cr1'])
-    raw(side, 'defer', ids['def_item'])
-    make('def_resumed', 'deferred item whose change request an earlier run made', '--parent', ids['cr1'])
-    raw(side, 'defer', ids['def_resumed'])
-    for name, flags in (('resumed_cr', ['--deps', f"relates-to:{ids['cr1']}"]), ('stray_cr', [])):  # the interrupted run's request, linked; a user's own empty one of the same title
-        rc, out, err, _ = raw(side, 'create', 'deferred item whose change request an earlier run made', '-t', 'change-request', '-d', 'x', '--silent', '--status', 'deferred', *flags)
-        if rc:
-            raise RuntimeError(f'create {name}: {err}{out}')
-        ids[name] = out.strip().splitlines()[-1]
-    make('cr7', 'a deferred change request', kind='change-request')
-    make('def_under', 'item of the deferred change request', '--parent', ids['cr7'])
-    raw(side, 'defer', ids['def_under'])
-    raw(side, 'defer', ids['cr7'])
-    make('loose', 'loose work item', '--labels', 'topic:loose')
-    make('loose_def', 'loose deferred work item')
-    raw(side, 'defer', ids['loose_def'])
-    make('held', 'held item', '--parent', ids['cr1'])
-    update('held', '--assignee', 'abcd1234', '--set-metadata', 'hold=work', '--status', 'in_progress')
-    make('bug', 'a bug item', '--parent', ids['cr1'], kind='bug')
-    make('design', 'a design item', '--parent', ids['cr1'], kind='design')
-    make('spike', 'a spike', *no_commit, kind='spike')
-    make('nocode', 'no-code task inside a change request', '--parent', ids['cr1'], '--metadata', '{"no_code":true}')
-    make('reopened', 'reopened item', '--parent', ids['cr1'])
-    update('reopened', '--set-metadata', 'outcome=done', '--set-metadata', 'triaged_tip=abc')
-    make('target', 'link target', *no_commit)
-    for name, kind in (('waits', 'waits-for'), ('cond', 'conditional-blocks'), ('found', 'discovered-from'), ('related', 'related'), ('dup', 'duplicates')):
-        make(name, f'item with {kind}', '--parent', ids['cr1'])
-        link(name, 'target', kind)
-    make('replanned', 'change request returned for replanning', kind='change-request')
-    update('replanned', '--set-metadata', 'replan=the ruling changed it')
-    make('milestone', 'a milestone', kind='milestone')
-    link('milestone', 'cr4', 'blocks')
-    make('ms_closed', 'a closed milestone', kind='milestone')
-    make('released', 'released ruling', kind='decision')
-    update('released', '--status', 'released')
-    make('unratified', 'unratified ruling', kind='decision')
-    update('unratified', '--status', 'needs_ratification', '--description', '## Question\nWhich?\n## Decision\nThis.\n## Reversal\nUndo this by hand.\n')
-    make('old_ruling', 'superseded ruling', kind='decision')
-    make('new_ruling', 'newer ruling', kind='decision')
-    link('old_ruling', 'new_ruling', 'supersedes')
-    make('ruling_wait', 'in-force ruling that waits on work', kind='decision')
-    update('ruling_wait', '--status', 'released')
-    make('plan_question', 'open question the ruling waits on', kind='decision')
-    link('ruling_wait', 'target', 'blocks')
-    link('ruling_wait', 'plan_question', 'blocks')
-    make('ruling_cr', 'in-force ruling that waits on a change request', kind='decision')
-    update('ruling_cr', '--status', 'released')
-    link('ruling_cr', 'cr1', 'blocks')
-    make('planned', 'planned ruling', kind='decision')
-    make('dropped', 'dropped ruling', kind='decision')
-    for name in ('planned_carried', 'planned_lower', 'answered', 'dropped_word', 'unmapped'):
-        make(name, f'{name} ruling', kind='decision')
-    make('user_held', 'item held by the user', '--parent', ids['cr1'])
-    update('user_held', '--assignee', 'user')
-    make('user_gate', 'user rotate the key', kind='gate')
-    make('waiter', 'item waiting on the gate', '--parent', ids['cr1'])
-    link('waiter', 'user_gate', 'blocks')
-    make('closed_gate', 'an old gate', kind='gate')
-    rc, out, err, _ = raw(side, 'gate', 'create', '--type=timer', '--blocks', ids['target'], '--timeout', '2h', '--title', 'Timer gate')
-    make('dated', 'dated deferral', *no_commit, '--defer', '2027-03-04')
-    make('dated_live', 'worked item with a stale date', *no_commit, '--defer', '2020-01-01')
-    update('dated_live', '--status', 'open')
-    make('unratified2', 'second unratified ruling', kind='decision')
-    update('unratified2', '--status', 'needs_ratification', '--description', '## Question\nWhich?\n## Decision\nThis.\n## Reversal\nUndo it.\n')
-    rc, out, err, _ = raw(side, 'create', 'Confirm or revise: second unratified ruling?', '-t', 'decision', '--silent', '--deps', f"relates-to:{ids['unratified2']}",
-                          '-d', f"## Question\nConfirm ruling {ids['unratified2']} or revise it?\n\nUndo it.\n")  # an earlier run's question: made, linked, the ruling not yet in force
-    ids['confirm_q'] = out.strip().splitlines()[-1]
-    make('user_item2', 'user check the logs', *no_commit)
-    update('user_item2', '--assignee', 'user')
-    raw(side, 'gate', 'create', '--type=human', '--blocks', ids['user_item2'], '--title', 'Existing human gate')
-    make('conditional', 'conditional deferral', *no_commit)
-    update('conditional', '--notes', f"revisit after {ids['target']} lands")
-    link('conditional', 'target', 'blocks')  # the deferral already holds a wait on an open record: only that one reopens (nixes-gym2j)
-    raw(side, 'defer', ids['conditional'])
-    make('cond_loose', 'conditional deferral of a work item')
-    update('cond_loose', '--notes', f"revisit after {ids['target']} lands")
-    link('cond_loose', 'target', 'blocks')
-    raw(side, 'defer', ids['cond_loose'])
-    make('cond_rel', 'conditional deferral with a plain link', *no_commit)
-    update('cond_rel', '--notes', f"revisit after {ids['target']} lands")
-    link('cond_rel', 'target', 'relates-to')
-    raw(side, 'defer', ids['cond_rel'])
-    make('cond_none', 'conditional deferral with no link', *no_commit)
-    update('cond_none', '--notes', f"revisit after {ids['target']} lands")
-    raw(side, 'defer', ids['cond_none'])
-    make('cond_mixed', 'conditional deferral that also waits on a someday task', *no_commit)  # nixes-tpbjs N8: undefer would refuse it
-    make('someday', 'someday task', *no_commit)
-    update('cond_mixed', '--notes', f"revisit after {ids['target']} lands")
-    link('cond_mixed', 'target', 'blocks')
-    link('cond_mixed', 'someday', 'blocks')
-    raw(side, 'defer', ids['someday'])
-    raw(side, 'defer', ids['cond_mixed'])
-    make('cond_qd', 'deferred question', kind='decision')  # the same, but the deferred record is a question: undefer's own rule refuses it, check tolerates it
-    make('cond_q', 'conditional deferral that also waits on a deferred question', *no_commit)
-    update('cond_q', '--notes', f"revisit after {ids['target']} lands")
-    link('cond_q', 'target', 'blocks')
-    link('cond_q', 'cond_qd', 'blocks')
-    raw(side, 'defer', ids['cond_qd'])
-    raw(side, 'defer', ids['cond_q'])
-    make('rule_a', 'in-force ruling that waits on an in-force ruling', kind='decision')
-    update('rule_a', '--status', 'released')
-    make('rule_b', 'in-force ruling the other waits on', kind='decision')
-    update('rule_b', '--status', 'released')
-    link('rule_a', 'rule_b', 'blocks')
-    make('user_item', 'user step item', *no_commit)
-    update('user_item', '--assignee', 'user')
-    make('ratify', 'Ratify the landing', '--parent', ids['cr1'])
-    update('ratify', '--status', 'needs_ratification', '--set-metadata', 'ratification=landing')
-    make('epic', 'Big topic epic', kind='epic')
-    make('child', 'epic child', '--parent', ids['epic'], *no_commit)
-    update('cr2', '--status', 'in_review', '--assignee', 'abcd1234')
-    update('cr3', '--status', 'in_review')
-    update('cr4', '--status', 'needs_acceptance')
-    for name, title, status in (('ck1', 'checkpoint CR, open', None), ('ck2', 'checkpoint CR, awaiting acceptance', 'needs_acceptance')):
-        make(name, title, kind='change-request')
-        update(name, '--set-metadata', 'checkpoint=design', *(['--status', status, '--set-metadata', 'review_tip=abc123'] if status else []))
-        make(f'{name}_design', f'{title}: design', '--parent', ids[name], kind='design')
-        if status:
-            update(f'{name}_design', '--status', 'in_review')
-    make('ck_waiter', 'waits on a design item', *no_commit)
-    link('ck_waiter', 'ck1_design', 'blocks')
-    update('cr5', '--status', 'needs_acceptance', '--set-metadata', 'look=after')
-    update('cr6', '--status', 'in_progress', '--assignee', 'abcd1234')
+    rc, out, err, _ = raw(side, 'import', str(HERE / 'fixtures' / 'migrate-old-forms.jsonl'))
+    if rc:
+        raise RuntimeError(f'import the old forms: {err}{out}')
+    ids = {name.removeprefix('mg-').replace('-', '_'): name for name in items(side)}
     for name in ('cr2', 'cr3', 'cr4', 'cr5', 'cr6', 'ck1', 'ck2'):
         git('worktree', 'add', '-q', f'.worktrees/{ids[name]}', '-b', f'cr/{ids[name]}', cwd=ROOT / side)
-    for name, reason in (('ms_closed', 'closed in the earlier model'), ('closed_gate', 'closed in the earlier model'), ('old_ruling', 'superseded by the newer ruling'),
-                         ('planned', 'planned in nixes-abc and done'), ('dropped', 'Dropped: no longer wanted at all'),
-                         ('planned_carried', 'Planned: carried into nixes-abc and done'), ('planned_lower', 'planned the work as nixes-abc'),
-                         ('answered', 'Answered by released nixes-abc'), ('dropped_word', 'dropped, no longer wanted'), ('unmapped', 'no longer wanted at all')):
-        raw(side, 'close', ids[name], '--reason', reason)
     run(side, 'setup', role=None)  # status.custom to the current list; the records keep their old statuses
     raw(side, 'config', 'unset', 'custom.board.model')
     raw(side, 'dolt', 'commit', '-m', 'old forms')
+    return ids
 
-    script = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'convert-stored-forms.py'
 
+def t_rehearse() -> None:
+    """board-migrate --rehearse on a board holding every old form: the whole conversion on a copy in a temporary board, nothing written here."""
+    side = 'rehproj'
+    ids = old_form_board(side)
     scratch = ROOT / 'rehearsals'  # the rehearsal's TMPDIR: its folder and its server's command line sit under this run's own root, so another session's never match
     scratch.mkdir()
 
@@ -2480,7 +1109,24 @@ def t_migrate() -> None:
         return [str(p) for p in scratch.glob('board-rehearsal-*')] + running
 
     def migrate(*flags: str):
-        result = subprocess.run([sys.executable, '-B', str(script), *flags], cwd=ROOT / side, capture_output=True, text=True, env={**base_env(side), 'TMPDIR': str(scratch)}, input='')
+        result = subprocess.run([sys.executable, '-B', str(MIGRATE_SCRIPT), *flags], cwd=ROOT / side, capture_output=True, text=True, env={**base_env(side), 'TMPDIR': str(scratch)}, input='')
+        return result.returncode, result.stdout, result.stderr
+
+    before = items(side)
+    rc, out, err = migrate('--rehearse')
+    check(rc == 0 and 'rehearsal on a copy' in out and out.index('--- summary') < out.index('--- conversion (exit 0)') and 'conversion(s) applied' in out and 'mark: blocked' in out
+          and f"{ids['ratify']}" in out.split('--- conversion')[0] and items(side) == before and not leftovers(),
+          'migrate: --rehearse converts a copy in a temporary board, shows the open ratification that blocks its mark, and writes nothing here', (leftovers(), items(side) == before, err + out[-300:]))
+
+
+def t_migrate() -> None:
+    """board-migrate's conversion on a board holding every old form: refused writes and open reads before, a dry run that writes nothing,
+    the conversions, a rerun that finds nothing, `check` clean, and the marker last."""
+    side = 'migproj'
+    ids = old_form_board(side)
+
+    def migrate(*flags: str):
+        result = subprocess.run([sys.executable, '-B', str(MIGRATE_SCRIPT), *flags], cwd=ROOT / side, capture_output=True, text=True, env=base_env(side), input='')
         return result.returncode, result.stdout, result.stderr
 
     rc, out, err, _ = run(side, 'update', ids['bug'], '--title', 'a bug item, retitled', role=None)
@@ -2490,45 +1136,6 @@ def t_migrate() -> None:
     before = items(side)
     rc, out, err = migrate()
     check(rc == 0 and out.count('would: ') >= 20 and items(side) == before, 'migrate: the dry run lists the conversions and writes nothing', err + out)
-    rc, out, err = migrate('--rehearse')
-    check(rc == 0 and 'rehearsal on a copy' in out and out.index('--- summary') < out.index('--- conversion (exit 0)') and 'conversion(s) applied' in out and 'mark: blocked' in out
-          and f"{ids['ratify']}" in out.split('--- conversion')[0] and items(side) == before and not leftovers(),
-          'migrate: --rehearse converts a copy in a temporary board, shows the open ratification that blocks its mark, and writes nothing here', (leftovers(), items(side) == before, err + out[-300:]))
-    child = subprocess.Popen([sys.executable, '-B', str(script), '--rehearse'], cwd=ROOT / side, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**base_env(side), 'TMPDIR': str(scratch)})
-    wait_until(lambda: any(scratch.glob('board-rehearsal-*')), 60)
-    child.send_signal(signal.SIGTERM)
-    child.wait(120)
-    check(not leftovers(), 'migrate: a rehearsal killed midway leaves no folder and no server', leftovers())
-
-    def killed_at(window: str) -> list[str]:
-        """A rehearsal that gets its SIGTERM at an exact point: right after its folder is made, or right after `board setup` is spawned (which then starts the copy's server)."""
-        hook = (f'import os, runpy, signal, subprocess, sys, tempfile\n'
-                f'window, script = {window!r}, {str(script)!r}\n'
-                'term = lambda: os.kill(os.getpid(), signal.SIGTERM)\n'
-                'made = tempfile.mkdtemp\n'
-                'def mkdtemp(*a, **k):\n'
-                '    folder = made(*a, **k)\n'
-                '    if window == "folder": term()\n'
-                '    return folder\n'
-                'tempfile.mkdtemp = mkdtemp\n'
-                'spawn = subprocess.Popen\n'
-                'class Popen(spawn):\n'
-                '    def __init__(self, args, *a, **k):\n'
-                '        super().__init__(args, *a, **k)\n'
-                '        if window == "setup" and list(args)[1:2] == ["setup"]: term()\n'
-                'subprocess.Popen = Popen\n'
-                'sys.argv = [script, "--rehearse"]\n'
-                'runpy.run_path(script, run_name="__main__")\n')
-        child = subprocess.run([sys.executable, '-B', '-c', hook], cwd=ROOT / side, capture_output=True, text=True, env={**base_env(side), 'TMPDIR': str(scratch)}, timeout=300)
-        seen = leftovers()
-        deadline = time.time() + 20  # an orphaned setup would still start its server in this time
-        while not seen and time.time() < deadline:
-            time.sleep(1)
-            seen = leftovers()
-        return ([f'exit {child.returncode}: {child.stderr[-300:]}'] if child.returncode != 143 else []) + seen
-
-    for window in ('folder', 'setup'):
-        check(not (seen := killed_at(window)), f'migrate: a rehearsal that gets SIGTERM right after its {window} step leaves no folder and no server', seen)
     rc, out, err = migrate('--mark')
     check(rc == 1 and setting(side, 'custom.board.model') == '', 'migrate: the marker waits for the conversions', err + out)
     rc, out, err = migrate('--apply')
@@ -2680,13 +1287,24 @@ def t_migrate() -> None:
 
 
 def cleanup() -> None:
+    """Ends this run's sync waits and every process with its folder on the command line (its Dolt servers, a rehearsal's), then
+    removes the folder. The watcher calls it too, however the run ended."""
     for pid in waits():
         with contextlib.suppress(ProcessLookupError):  # a wait that ended since it was listed
             os.kill(pid, signal.SIGKILL)
-    for side in ('a', 'b', 'c', 'unset', 'setupproj', 'setupsrv'):
-        if (ROOT / side / '.beads').exists():
-            subprocess.run([sys.executable, '-B', BOARD, 'bd', 'dolt', 'stop'], cwd=ROOT / side, env=base_env(side), capture_output=True, input='', text=True)
+    stop_processes(ROOT.name)
     shutil.rmtree(ROOT, ignore_errors=True)
+
+
+def stop_processes(folder: str) -> None:
+    """SIGTERM, then SIGKILL, to every process whose command line names /tmp/<folder>/."""
+    pids = [int(pid) for pid in subprocess.run(['pgrep', '-f', f'/{folder}/'], capture_output=True, text=True).stdout.split() if int(pid) != os.getpid()]
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in pids:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, sig)
+        if wait_until(lambda: not any(alive(pid) for pid in pids), 5, 0.2):
+            break
 
 
 def alive(pid: int) -> bool:
@@ -2695,33 +1313,22 @@ def alive(pid: int) -> bool:
     return bool(state) and not state.startswith('Z')
 
 
-def stop_dead_servers() -> list[int]:
-    """Stops the Dolt servers under /tmp/shared-board.* (/private/tmp on macOS) whose run is gone: its folder's runner.pid
-    names no live process. A folder without one belongs to a run of an older script, gone only when no test-shared-board.py
-    runs at all. Another live run's servers stay."""
+def clear_dead_runs() -> None:
+    """Stops the processes and removes the folder of every earlier run whose process is gone: its folder's runner.pid names no live
+    process. A folder without one (or a server whose folder is gone) belongs to a run of an older script, cleared only when no other
+    test-shared-board.py runs. Another live run's stay."""
     ps = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True, text=True).stdout
-    runners = any('test-shared-board.py' in row and not row.split(maxsplit=1)[0] == str(os.getpid()) for row in ps.splitlines())
-    stopped = []
-    for row in ps.splitlines():
-        pid, _, command = row.strip().partition(' ')
-        found = re.search(r'/tmp/(shared-board\.[^/\s]+)/', command)
-        if not found or 'dolt' not in command or not pid.isdigit() or int(pid) == os.getpid() or found.group(1) == ROOT.name:
-            continue
+    runners = any('test-shared-board.py' in row and '--watch' not in row and row.split(maxsplit=1)[0] != str(os.getpid()) for row in ps.splitlines())
+    names = {path.name for path in Path('/tmp').glob('shared-board.*')} | set(re.findall(r'/tmp/(shared-board\.[^/\s]+)/', ps))
+    for name in sorted(names - {ROOT.name}):
         try:
-            owner = int((Path('/tmp') / found.group(1) / RUNNER_PID).read_text().strip())
+            owner = int((Path('/tmp') / name / RUNNER_PID).read_text().strip())
         except (OSError, ValueError):
             owner = None
-        if (alive(owner) if owner else runners):
+        if alive(owner) if owner else runners:
             continue
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.kill(int(pid), sig)
-            except ProcessLookupError:
-                break
-            if wait_until(lambda: not alive(int(pid)), 3):
-                break
-        stopped.append(int(pid))
-    return stopped
+        stop_processes(name)
+        shutil.rmtree(Path('/tmp') / name, ignore_errors=True)
 
 
 CHILDREN: list[subprocess.Popen] = []  # a parallel run's group runs
@@ -2746,8 +1353,8 @@ def run_parallel(groups: list[str]) -> int:
     outputs = {}
     for name in groups:
         out = tempfile.TemporaryFile('w+', encoding='utf-8')
-        CHILDREN.append(subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--only', name, *args],
-                                         stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, text=True))
+        CHILDREN.append(subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--only', name, '--linked', *args],
+                                         stdin=subprocess.PIPE, stdout=out, stderr=subprocess.STDOUT, text=True))
         outputs[name] = out
     failed = []
     for name, child in zip(groups, CHILDREN):
@@ -2803,9 +1410,26 @@ def t_cleanup() -> None:
             shutil.rmtree(folder, ignore_errors=True)
 
 
-ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'writers', 'scenarios', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'record', 'migrate', 'cleanup')
-only = {name for name in options.only.split(',') if name}
-stop_dead_servers()
+ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'inbox', 'cr', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'rehearse', 'migrate', 'cleanup')
+SHARING = ('share_join', 'child_ids', 'queues', 'inbox', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move')
+MIGRATION = ('rehearse', 'migrate')
+PREFIX = ('unshared', 'share_join')  # a shared-board group starts on the board these leave: shared by a, joined by b
+if options.watch:
+    sys.stdin.read()  # end of file: the run is gone, however it ended
+    cleanup()
+    sys.exit(0)
+WATCHER = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--watch', '--board', BOARD], stdin=subprocess.PIPE,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**os.environ, 'SB_WATCH_ROOT': str(ROOT)}, start_new_session=True)
+if options.linked:  # the parallel run that started this group is gone: end like on its SIGTERM
+    threading.Thread(target=lambda: (sys.stdin.read(), os.kill(os.getpid(), signal.SIGTERM)), daemon=True).start()
+only = [name for name in options.only.split(',') if name]
+unknown = set(only) - set(ORDER)
+if unknown:
+    sys.exit(f"unknown group(s): {', '.join(sorted(unknown))}")
+# soak is an upgrade check: --soak <s> or --only soak runs it.
+selected = only or [name for name in ORDER if (options.soak if name == 'soak' else options.shared if name in SHARING else options.migrate if name in MIGRATION else True)]
+shared = any(name in SHARING for name in selected)
+clear_dead_runs()
 for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
     signal.signal(signum, on_signal)
 if options.idle:
@@ -2814,17 +1438,14 @@ if options.idle:
     sys.exit(0)
 if not options.only and not options.serial:
     started = time.time()
-    code = run_parallel([name for name in ORDER if name not in ('unshared', 'share_join') and (name != 'soak' or options.soak)])
+    code = run_parallel([name for name in selected if not (shared and name == 'share_join')])  # each shared group runs PREFIX itself
     print(f'   (parallel run {time.time() - started:.0f} s)', flush=True)
     cleanup()
     sys.exit(code)
 try:
     setup()
     for name in ORDER:
-        # share_join and unshared set up every later group.
-        if name == 'soak' and not options.soak and name not in only:
-            continue  # an upgrade check: --soak <s> or --only soak runs it
-        if not only or name in only or name in ('unshared', 'share_join'):
+        if name in selected or (shared and name in PREFIX):
             print(f'## {name}', flush=True)
             started = time.time()
             globals()[f't_{name}']()

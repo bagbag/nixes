@@ -3259,6 +3259,11 @@ def test_board(root: Path, board_env, part: str) -> None:
                 report = invoke(["check"], Fake(variant(**{**waits, "Ready task": {**waits["Ready task"], "status": "deferred"}})))[1]
                 if f"  {ready}  deferred-blocker" not in report or loose not in report:
                     raise ValueError(f"board check must flag a deferred item a live item waits on:\n{report}")
+                # A live wait on a record closed dropped never delivers: check reports it on the waiter, naming the record.
+                dropped_wait = variant(**{**waits, "Ready task": {**waits["Ready task"], "status": "closed", "metadata": {"outcome": "dropped"}}})
+                found = json.loads(invoke(["check", "--json"], Fake(dropped_wait))[1])["deviations"]
+                if not any(d["id"] == loose and d["class"] == "dropped-blocker" and ready in d["detail"] for d in found):
+                    raise ValueError(f"board check must report a live wait on a record closed dropped: {found}")
                 # A milestone and a gate are no deferral types, whatever the reason says.
                 for kind in ("milestone", "gate"):
                     fake = Fake(variant(**{"Ready task": {"issue_type": kind}}))
@@ -6321,6 +6326,34 @@ def test_board(root: Path, board_env, part: str) -> None:
                         _, output, _ = invoke(["show", "tri"], Fake(issues), "lead0001")
                         if "tri: base change one" not in output or "tri: base change two" not in output:
                             raise ValueError(f"Accept must show all incoming commits since coverage: {output}")
+                        # The Accept JSON gives the incoming base tip and each incoming commit's files, marking those the CR also changed.
+                        shared = "".join(f"{n}\n" for n in range(1, 11))
+                        commit(repo_root, "ovl.txt", shared, "ovl: shared file")
+                        issues, tip, wt = make_cr("ovl", "ovl.txt", shared.replace("8\n", "8\nNEW\n"))
+                        commit(repo_root, "ovl-b.txt", "b\n", "ovl: base file the CR leaves alone")
+                        commit(repo_root, "ovl.txt", shared.replace("2\n", "X\n"), "ovl: base edit of the CR's file")
+                        fake = Fake(issues)
+                        invoke(["cr", "refresh", "ovl"], fake, "lead0001")
+                        apply_writes(issues, fake)
+                        acceptance = next(c for c in states(issues) if c["id"] == "ovl")["acceptance"]
+                        incoming = {c["subject"]: c for c in acceptance["incomingCommits"]}
+                        if acceptance["incomingBaseTip"] != issues[0]["metadata"]["review_base_tip"] or set(incoming) != {"ovl: base file the CR leaves alone", "ovl: base edit of the CR's file"} \
+                                or incoming["ovl: base edit of the CR's file"]["files"] != ["ovl.txt"] or incoming["ovl: base edit of the CR's file"]["crFiles"] != ["ovl.txt"] \
+                                or incoming["ovl: base file the CR leaves alone"]["files"] != ["ovl-b.txt"] or incoming["ovl: base file the CR leaves alone"]["crFiles"]:
+                            raise ValueError(f"the Accept JSON must list the incoming commits and mark the paths the CR changed too: {acceptance}")
+                        # A no-agent series refreshed over a moved base stays at Accept: the user's seen tip stays, and the delta shows what changed since.
+                        issues, tip, wt = make_cr("nar", "nar.txt", "x\n")
+                        seen_base = at_main()
+                        follow = commit(wt, "nar-doc.txt", "doc\n", "nar: documentation-only follow-up")
+                        issues[0]["metadata"].update(no_agent_review_reason="documentation only", user_seen_tip=tip, user_seen_base_tip=seen_base, check_tip=follow)
+                        commit(repo_root, "nar-base.txt", "b\n", "nar: unrelated incoming base change")
+                        fake = Fake(issues)
+                        code, output, errors = invoke(["cr", "refresh", "nar"], fake, "lead0001")
+                        apply_writes(issues, fake)
+                        row = next(c for c in states(issues) if c["id"] == "nar")
+                        if code or row["status"] != "passed" or row["acceptance"]["fullChange"] or row["acceptance"]["seenTip"] != tip \
+                                or "documentation-only follow-up" not in (row["acceptance"]["delta"] or ""):
+                            raise ValueError(f"a refreshed no-agent series must stay at Accept with its changed delta: {code} {output} {errors} {row['status']} {row['acceptance']}")
                         issues, tip, wt = make_cr("f1new", "f1n.txt", "x\n")
                         commit(wt, "f1n2.txt", "unreviewed\n", "f1: unreviewed commit")
                         _, output, _ = invoke(["cr", "refresh", "f1new"], Fake(issues), "lead0001")
@@ -15303,6 +15336,38 @@ def test_board_rules(root: Path) -> None:
         if code == 0 or any(x[:2] == ["update", "r-rule"] or x[:2] == ["update", "r-dec"] and "--assignee" in x and "in_force" not in x for x in fake.writes()):
             raise ValueError(f"a failed wait transfer must stop the record before it supersedes or releases: {code} {fake.writes()}")
 
+    def record_rerun_after_stop():
+        """nixes-ymay1 N2: a stop inside `ruling record --unratified --waits-on --answers` (bd refuses the close of the answered question once)
+        leaves the ruling in force, waiting on its premise and still held, the question open; the rerun closes the question and releases the ruling."""
+        class Stops(Applying):
+            stopped = False
+
+            def __call__(self, command, **kwargs):
+                if command[:3] == ["bd", "close", "r-q"] and not self.stopped:
+                    self.stopped = True
+                    return subprocess.CompletedProcess(command, 1, "", "injected stop")
+                return super().__call__(command, **kwargs)
+
+        fake = Stops(W(("r-q", "r-rule", "blocks"), ("r-t", "r-q", "blocks")))
+        by_id = {issue["id"]: issue for issue in fake.issues}
+        waits_on = lambda item: {d["depends_on_id"] for d in by_id[item]["dependencies"] if d["type"] == "blocks"}
+        argv = ["ruling", "record", "r-dec", str(body), "--unratified", "--waits-on", "r-rule", "--answers", "r-q"]
+
+        def call(args):
+            fake.error, fake.built = None, []
+            board._prefix.clear()
+            return run_in(args, fake, io.StringIO(), io.StringIO(), lambda error: None, lead, "", None, None)[:3]
+        code, _, err = call(argv)
+        if code == 0 or not fake.stopped or by_id["r-dec"]["status"] != "in_force" or by_id["r-dec"]["assignee"] != lead \
+                or waits_on("r-dec") != {"r-rule"} or by_id["r-q"]["status"] == "closed":
+            raise ValueError(f"a stop must leave the ruling in force, waiting on its premise and held, the question open: {code} {err.strip()[-300:]!r} {by_id['r-dec']} {by_id['r-q']['status']}")
+        code, _, err = call(["claim", "r-dec"])
+        if code != 0 or by_id["r-dec"]["assignee"] != lead:
+            raise ValueError(f"the rerun's claim must keep the holder's own hold: {code} {err.strip()[-300:]!r} {by_id['r-dec']['assignee']}")
+        code, _, err = call(argv)
+        if code != 0 or by_id["r-q"]["status"] != "closed" or by_id["r-dec"].get("assignee") or "r-dec" not in waits_on("r-t"):
+            raise ValueError(f"the rerun must close the question and release the ruling: {code} {err.strip()[-300:]!r} {by_id['r-q']['status']} {by_id['r-dec'].get('assignee')}")
+
     def no_write_of(argv, text, issues, actor):
         """The call writes nothing that contains `text` (it may be refused or end early)."""
         def check(case_cell=None):
@@ -15393,7 +15458,8 @@ def test_board_rules(root: Path) -> None:
     add("parent-child.only-move", {("create", "graph"): refused(["create", "--graph", plan_file([node("c", "change-request")], [{"from_id": "r-t", "to_key": "c", "type": "parent-child"}])], "agents board move", actor=None),
                                    ("link", "any"): refused(["link", "r-t", "r-cr", "--type", "parent-child"], "agents board move", actor=None),
                                    ("unlink", "any"): refused(["unlink", "r-cr-item", "r-cr"], "agents board move", actor=None)})
-    add("parent-child.leave", {("move", "any", "task"): refused(["move", "r-item", "--to", "r-cr"], "r-held", actor=agent),
+    add("parent-child.leave", {("move", "any", "task"): every(refused(["move", "r-item", "--to", "r-cr"], "r-held", actor=agent),
+                                                              wrote(["move", "r-cr-item", "--to", "r-cr2"], update_has("r-cr-item", "--parent", "r-cr2"), actor=planner)),  # a planner moves an item of an unheld request
                                **{("move", "any", kind): refused(["move", subject, "--to", target], "is closed", actor=None)  # only an open record changes its parent
                                   for kind, subject, target in (("no-commit", "r-tdone", "r-cr"), ("cr", "r-crx", "r-ms"), ("decision", "r-qx", "r-cr"),
                                                                 ("gate", "r-gatex", "r-cr"), ("milestone", "r-msx", "r-cr"))}})
@@ -15419,9 +15485,13 @@ def test_board_rules(root: Path) -> None:
                                    refused(["create", "--graph", plan_file([node("c", parent_id="r-crd"), node("s", no_commit=True, waits_on=[{"on": "c", "for": "x"}])])],
                                            "r-crd is deferred", actor=None)),  # nixes-dl0ru F3: a new item of a deferred CR, as an existing one
         ("wait", "same-cr"): refused(["wait", "r-crd-item", "--on", "r-crd-item2", "--for", "x"], "deferred", actor=solo),
-        ("wait", "other-cr"): refused(["wait", "r-item", "--on", "r-crd-item", "--for", "x"], "deferred"),
+        ("wait", "other-cr"): every(refused(["wait", "r-item", "--on", "r-crd-item", "--for", "x"], "deferred"),
+                                    wrote(["wait", "r-item", "--on", "r-q2x", "--for", "x"], batch_has("dep add r-item r-q2x blocks"))),  # a question closed dropped may be waited on
         ("wait", "cr"): refused(["wait", "r-cr", "--on", "r-crd", "--for", "x"], "deferred", actor=solo),
-        **{("defer", "any", kind): refused(["defer", target, "--reason", "set aside"], waiter, issues=W((waiter, target, "blocks")), actor=None)
+        **{("defer", "any", kind): every(refused(["defer", target, "--reason", "set aside"], waiter, issues=W((waiter, target, "blocks")), actor=None),
+                                         # only live waiters hold a deferral back
+                                         wrote(["defer", target, "--reason", "set aside"], update_has(target, "deferred_by="),
+                                               issues=W((waiter, target, "blocks"), **{waiter.replace("-", "_"): {"status": "deferred", "metadata": {**NC, "deferred_by": "user"}}}), actor=None))
            for kind, target, waiter in (("task", "r-t2", "r-t"), ("cr", "r-cr2", "r-t"))},
         ("defer", "any", "decision"): refused(["defer", "r-q", "--reason", "set aside"], "r-held", issues=W(("r-item", "r-q", "blocks")), actor=None),
         # nixes-dl0ru F9: an undeferral leaves nothing waiting on a deferred record, unless the same call undefers it too
@@ -15444,7 +15514,10 @@ def test_board_rules(root: Path) -> None:
                                                     wrote(["wait", "r-rule", "--on", "r-rule2", "--for", "x"], lambda writes, fake: bool(writes), actor=solo)),  # an in-force ruling is a planning wait (nixes-r0e01)
                           ("wait", "other-cr"): refused(["wait", "r-ms", "--on", "r-t", "--for", "x"], "milestone", actor=solo),
                           ("wait", "cr"): refused(["wait", "r-ms", "--on", "r-cr", "--for", "x"], "milestone", actor=solo),
-                          ("gate create", "any"): refused(["gate", "create", "--blocks", "r-ms", "--reason", "a person signs"], "milestone", actor=None),
+                          ("gate create", "any"): every(refused(["gate", "create", "--blocks", "r-ms", "--reason", "a person signs"], "milestone", actor=None),
+                                                        # an in-force ruling waits for a new human gate
+                                                        wrote(["gate", "create", "--blocks", "r-rule", "--reason", "the user gives the go"], lambda w, f: any(x[:3] == ["gate", "create", "--type=human"] for x in w),
+                                                              issues=[*world(), record("r-gnew", "gate", await_type="human")], actor=None)),
                           ("ruling revise", "holds"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "r-ms"], "milestone", actor=lead),
                           ("ruling release", "any"): refused(RELEASE, "milestone", writes=by_design, actor=lead,
                                                              issues=W(("r-dec", "r-rule", "tracks"), ("r-ms", "r-rule", "relates-to"))),
@@ -15472,8 +15545,12 @@ def test_board_rules(root: Path) -> None:
                                                               issues=W(("r-rule2", "r-t2", "blocks"), ("r-t2", "r-t", "blocks"), ("r-t", "r-rule", "relates-to")))})
     add("blocks.hold", {("create", "holds"): refused([*CREATE, "-t", "decision", "--holds", "r-item"], "r-held", actor=agent),
                         ("wait", "same-cr"): refused(["wait", "r-item", "--on", "r-item2", "--for", "x"], "r-held", actor=agent),
-                        ("wait", "other-cr"): refused(["wait", "r-item", "--on", "r-cr-item", "--for", "x"], "r-held", actor=agent),
-                        ("unlink", "any"): refused(["unlink", "r-item", "r-item2"], "r-held", issues=W(("r-item", "r-item2", "blocks")), actor=agent),
+                        # a planner waits and unlinks an item of an unheld request; a deciding session writes a wait whoever holds the request
+                        ("wait", "other-cr"): every(refused(["wait", "r-item", "--on", "r-cr-item", "--for", "x"], "r-held", actor=agent),
+                                                    wrote(["wait", "r-cr-item", "--on", "r-cr2", "--for", "x"], batch_has("dep add r-cr-item r-cr2 blocks"), actor=planner),
+                                                    wrote(["wait", "r-item", "--on", "r-cr-item", "--for", "x"], batch_has("dep add r-item r-cr-item blocks"), actor=lead)),
+                        ("unlink", "any"): every(refused(["unlink", "r-item", "r-item2"], "r-held", issues=W(("r-item", "r-item2", "blocks")), actor=agent),
+                                                 wrote(["unlink", "r-cr-item", "r-cr2"], batch_has("dep remove r-cr-item r-cr2"), issues=W(("r-cr-item", "r-cr2", "blocks")), actor=planner)),
                         ("gate create", "any"): refused(["gate", "create", "--blocks", "r-item", "--reason", "a person signs"], "r-held", actor=agent),
                         ("ruling revise", "holds"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "r-item"], "r-held", actor=agent),
                         })
@@ -15500,11 +15577,24 @@ def test_board_rules(root: Path) -> None:
                            ("link", "any"): refused(["link", "r-t", "r-t2", "--type", "blocks"], "not a link word", actor=None)})
     add("blocks.pair", {("wait", form): wrote(["wait", waiter, "--on", target, "--for", "x"], batch_has(f"dep remove {waiter} {target}"), issues=W((waiter, target, "relates-to")), actor=solo)
                         for form, waiter, target in (("same-cr", "r-item", "r-item2"), ("other-cr", "r-cr-item", "r-t"), ("cr", "r-cr", "r-cr2"))})
-    add("blocks.no-dropped-close", {("close", "one-id"): refused(["close", "r-t2", "--reason", "dropped while it is waited on", "--outcome", "dropped"], "r-t", issues=W(("r-t", "r-t2", "blocks")), actor=None),
-                                    ("close", "ids"): refused(["close", "r-q", "r-t2", "--reason", "dropped while it is waited on", "--outcome", "dropped"], "r-t", issues=W(("r-t", "r-t2", "blocks")), actor=None),
+    closes = lambda *ids, outcome="outcome=dropped": lambda writes, fake: all(update_has(item, "--status closed", outcome)(writes, fake) for item in ids)
+    add("blocks.no-dropped-close", {("close", "one-id"): every(refused(["close", "r-t2", "--reason", "dropped while it is waited on", "--outcome", "dropped"], "r-t", issues=W(("r-t", "r-t2", "blocks")), actor=None),
+                                                               # a duplicate closes dropped, naming the original: the original stays open and the relates-to link stays
+                                                               wrote(["close", "r-t2", "--reason", "duplicate of r-t: same work", "--outcome", "dropped"],
+                                                                     lambda w, f: closes("r-t2")(w, f) and not any("r-t" in x or x[:1] == ["batch"] for x in w), issues=W(("r-t2", "r-t", "relates-to")), actor=agent)),
+                                    ("close", "ids"): every(refused(["close", "r-q", "r-t2", "--reason", "dropped while it is waited on", "--outcome", "dropped"], "r-t", issues=W(("r-t", "r-t2", "blocks")), actor=None),
+                                                            # a waiter closed in the same call does not hold its target, named before it or after it
+                                                            *(wrote(["close", *ids, "--reason", "dropped together in one call", "--outcome", "dropped"], closes("r-t", "r-t2"), issues=W(("r-t", "r-t2", "blocks")), actor=None)
+                                                              for ids in (("r-t", "r-t2"), ("r-t2", "r-t"))),
+                                                            # a done close meets the waits: one waiter closes with its target while another still waits on it
+                                                            wrote(["close", "r-t", "r-t2", "--reason", "both done before the request is dropped"], closes("r-t", "r-t2", outcome="outcome=done"),
+                                                                  issues=W(("r-t", "r-t2", "blocks"), ("r-q", "r-t2", "blocks")), actor=None)),
                                     ("close", "conflict"): None,
-                                    ("cr reject", "any"): refused(["cr", "reject", "r-cr", "dropped while its item is waited on"], "r-t",
-                                                                  issues=W(("r-t", "r-cr-item", "blocks"), r_cr_item={"status": "closed", "metadata": {"outcome": "done"}}), actor=None)})
+                                    ("cr reject", "any"): every(refused(["cr", "reject", "r-cr", "dropped while its item is waited on"], "r-t",
+                                                                        issues=W(("r-t", "r-cr-item", "blocks"), r_cr_item={"status": "closed", "metadata": {"outcome": "done"}}), actor=None),
+                                                                # the request is dropped once the live wait is gone
+                                                                wrote(["cr", "reject", "r-cr", "the request is dropped after its item was done"], lambda w, f: any(x[:2] == ["close", "r-cr"] for x in w) and update_has("r-cr", "outcome=dropped")(w, f),
+                                                                      issues=W(r_cr_item={"status": "closed", "metadata": {"outcome": "done"}}), actor=None))})
     add("blocks.reopen", {("reopen", "any", kind): refused(["reopen", subject], "r-tdrop", actor=None) if refusing else wrote(["reopen", subject], update_has(subject, "--status", "open"), actor=None)
                           for kind, subject, refusing in (("task", "r-tdone2", True), ("decision", "r-qx", True), ("gate", "r-gatex", False), ("milestone", "r-msx", False))})
     add("relates-to.free", {("link", "any"): wrote(["link", "r-item", "r-t", "--type", "relates-to"], batch_has("dep add r-item r-t relates-to"), actor=agent),
@@ -15633,7 +15723,8 @@ def test_board_rules(root: Path) -> None:
                         ("update", "label"): refused(["update", "r-t", "--label", "loose"], "topic:", actor=None), ("return", "finding"): None,
                         ("ruling revise", "label"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "none", "-l", "loose"], "topic:", actor=lead)})
     add("labels.hold", {("update", "label"): refused(["update", "r-item", "--label", "topic:x"], "r-held", actor=agent),
-                        ("route", "any"): refused(["route", "ben", "r-item"], "r-held", actor=lead, shared=stub),
+                        ("route", "any"): every(refused(["route", "ben", "r-item"], "r-held", actor=lead, shared=stub),
+                                                wrote(["route", "ben", "r-item"], update_has("r-item", "queue:ben"), actor=solo, shared=stub)),  # the holder routes its own item
                         })
     add("held-record.write", {**{("move", "any", kind): (refused(["move", "r-theld", "--to", "r-cr"], "aaaa1111", actor=planner) if kind in ("task", "no-commit")
                                                          else refused(["move", "r-held", "--to", "r-ms"], "solo0001", actor=agent)) for kind in ("task", "no-commit", "cr")},
@@ -16007,6 +16098,7 @@ def test_board_rules(root: Path) -> None:
                 "R3 release closes a question that waits on another it closes, past the ruling just carried to it": wrote(
                     ["ruling", "release", "r-dec", "--closes", "r-q=r-dec", "--closes", "r-q2=r-dec"], lambda w, f: [x for x in w if x[0] == "close" and x[1] == "r-q2"] and "--force" in [x for x in w if x[0] == "close" and x[1] == "r-q2"][0],
                     issues=[*W(), record("r-q2", "decision", waits=["r-q"])], actor=lead),
+                "N2 a stopped record reruns to the end": lambda case_cell=None: record_rerun_after_stop(),
                 "R1 record stops before superseding when a replaced record's waiter cannot be moved": lambda case_cell=None: record_stops_on_failed_transfer(),
                 "P4 release leaves a question it cannot close, and its waiters, alone": no_write_of(
                     ["ruling", "release", "r-dec", "--closes", "r-q2=r-dec"], "dep add r-t r-dec",

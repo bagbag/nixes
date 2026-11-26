@@ -112,7 +112,7 @@ SYNC_ATTEMPTS = 5  # tries per window, SYNC_RETRY_SECONDS apart; then the next b
 SYNC_RETRY_SECONDS = 5
 SYNC_REPORT_AFTER = 3  # consecutive failures before every command reports them; single ones recover by themselves
 WRITE_RETRIES = 4
-# bd raises this on a write that meets a sync's merge. Retire the retry when a bd release stops raising it: rerun the soak (bin/test-shared-board.py).
+# bd raises this on a write that meets a sync's merge. Retire the retry when a bd release stops raising it: rerun the soak (bin/test-shared-board.py --only soak).
 # On a bd upgrade recheck beads issues 4796 and 7839 and PR 7849.
 # `Merge conflict detected` is a different error, a stopped merge, and never retried.
 WRITE_RETRY_ERROR = 'foreign key conflicts'
