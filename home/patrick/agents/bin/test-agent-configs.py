@@ -2379,6 +2379,13 @@ def claimed_ids(fake) -> list[str]:
             and write[write.index("--if-assignee") - 2:write.index("--if-assignee")][0] == "--assignee" and write[write.index("--assignee") + 1] != ""]
 
 
+def without_bd(board, deck):
+    """Settings in place of the project's, which a read would take from bd (absent in the nix build, and the checkout's own board
+    elsewhere): the target unset, like a board before `board setup`, the rest the defaults of the bd fake."""
+    deck.settings.update(target="", setup="true", checks="true", look="before", view="code")
+    return deck
+
+
 @pytest.fixture(name="board_env")
 def loaded_board(root: Path):
     """The board module loaded in-process with the bd fake, the `bd export` fixture and a throwaway git repository as the working
@@ -2391,11 +2398,8 @@ def loaded_board(root: Path):
     spec.loader.exec_module(board)
 
     def bare_deck(issues: list[dict], complete: bool = True):
-        """An in-process board with no bd behind it (the nix build has none): no project settings, like a board before
-        `board setup`, so reading one never shells out."""
-        deck = board.Board(issues, complete=complete)
-        deck.settings.update(target="")
-        return deck
+        """An in-process board with no bd behind it (the nix build has none)."""
+        return without_bd(board, board.Board(issues, complete=complete))
 
     fixture = [json.loads(line) for line in
                (root / "bin" / "fixtures" / "board-export.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -9587,7 +9591,7 @@ def test_cr_rank(root: Path) -> None:
     if claimed != ["t", "t.sub", "plain"]:
         raise ValueError(f"claim order: a P3 request that is milestone work through an item or an ancestor beats a P2 one outside: {claimed}")
     # The queue key: base before stacked, milestone work, effective priority, waiting since; claim_order reads the same rank.
-    queue = board.Board([
+    queue = without_bd(board, board.Board([
         item("a", "change-request", "passed", 2, since="2026-10-02T00:00:00Z"),
         item("b", "change-request", "passed", 1, since="2026-10-03T00:00:00Z"),
         item("c", "change-request", "passed", 3, since="2026-10-01T00:00:00Z", parent="m"), item("c.i", "task", priority=3, parent="c"),
@@ -9595,7 +9599,7 @@ def test_cr_rank(root: Path) -> None:
         item("d", "change-request", "passed", 0, since="2026-10-04T00:00:00Z", base="e"),
         item("e", "change-request", "passed", 3, since="2026-10-05T00:00:00Z"),
         item("f", "change-request", "passed", 2, since="2026-10-01T12:00:00Z"),
-    ])
+    ]))
     order = [i["id"] for i in board.accept_queue(queue)]
     if order != ["e", "d", "c", "b", "f", "a"]:
         raise ValueError(f"accept queue: P0 (a base before the request on it), then milestone work, a base before the request on it, then priority, then waiting since: {order}")
