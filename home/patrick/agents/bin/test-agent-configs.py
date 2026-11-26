@@ -3143,6 +3143,7 @@ def test_board(root: Path, board_env, part: str) -> None:
                 code, _, errors = invoke(["claim", ids["Loose item"]], fake, "lead0001")
                 if code != 1 or fake.writes() or "outside any change request" not in errors or "board move" not in errors:
                     raise ValueError(f"board claim took a work item outside any change request: {code} {fake.writes()} {errors}")
+                # Work that commits nothing here (no_commit) is claimed outside any CR and is no `no-cr` deviation; neither is a person's item.
                 no_commit = variant(**{"Loose item": {"metadata": {"no_commit": True}}})
                 fake = Fake(no_commit)
                 code, _, errors = invoke(["claim", loose], fake, "lead0001")
@@ -4526,6 +4527,7 @@ def test_board(root: Path, board_env, part: str) -> None:
                 if '"held"' not in invoke(["position", "--json"], Fake(rows))[1]:
                     raise ValueError("position JSON lacks held")
 
+                # Claim order: P0, milestone, then finishing work and planning linked to running work, then priority and kind.
                 def unit(item_id, kind, status, priority, **more):
                     """What a claim finds for work: a change request with one open item (a pull's kind comes from the item's)."""
                     if kind != "task":
@@ -5427,6 +5429,8 @@ def test_board(root: Path, board_env, part: str) -> None:
                     if code != int(returned) or claimant != ("" if returned else "solo0001"):
                         raise ValueError(f"a review claim succeeds only while the CR is still in review: {errors} {fake.writes()}")
 
+                # Change requests (r24, r25): readiness, check state, landing, refresh, rejection, console rows; the crs parts run real git
+                # in a second scratch repository, bd writes recorded.
                 def readiness(*issues, complete=False):
                     return readiness_of(bare_deck(list(issues), complete), issues)
 
@@ -9889,14 +9893,14 @@ def test_strength_rules(root: Path) -> None:
 def test_console_programs(root: Path) -> None:
     """The console runs ~/.agents/bin programs either directly (their bin/ file must be executable) or through bash;
     its test kit has no processes, so only this check sees a missing execute bit. A bin/ file carries its installed
-    name (validate_copied_install)."""
+    name (test_copied_install)."""
     calls = []
     for source in (root / "claude" / "mods" / "console" / "hooks").glob("*.ts*"):
         text = source.read_text(encoding="utf-8")
         calls += [(source.name, "direct", name) for name in re.findall(r"process\.run\(\[binary\([^,]+, '([\w-]+)'\)", text)]
         calls += [(source.name, "bash", name) for name in re.findall(r"process\.run\(\['bash', binary\([^,]+, '([\w-]+)'\)", text)]
     if not calls:
-        raise ValueError("console: found no ~/.agents/bin calls; the pattern for validate_console_programs no longer matches")
+        raise ValueError("console: found no ~/.agents/bin calls; the pattern for test_console_programs no longer matches")
     for file, how, name in calls:
         target = root / "bin" / name
         if not target.is_file():
@@ -15805,7 +15809,7 @@ def test_board_rules(root: Path) -> None:
                 problems.append(f"case ({', '.join(key)}, {cell}) is in no verb row")
     if problems:
         raise ValueError("model.md Write rules and their cases disagree:\n  " + "\n  ".join(problems))
-    # The cases run real git (main_root, worktree lookups) in the process cwd: a throwaway repository on branch main, as validate_board does.
+    # The cases run real git (main_root, worktree lookups) in the process cwd: a throwaway repository on branch main, as test_board does.
     class Applying(Rules):
         """Rules' bd with its writes applied (update, close, batch dep add/remove, comments), so a sequence of verbs runs on one board."""
         def __call__(self, command, **kwargs):
